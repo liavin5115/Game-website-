@@ -19,24 +19,27 @@ class WalletService:
         return user.points if user else 0
 
     def add_points(self, user_id: int, amount: int, tx_type: TransactionType,
-                   description: str = "", reference_id: Optional[int] = None) -> Transaction:
+                   description: str = "", reference_id: Optional[int] = None,
+                   commit: bool = True) -> Transaction:
         """Add points (positive amount)"""
         if amount <= 0:
             raise ValueError("Amount must be positive for add_points")
-        return self._create_transaction(user_id, amount, tx_type, description, reference_id)
+        return self._create_transaction(user_id, amount, tx_type, description, reference_id, commit=commit)
 
     def deduct_points(self, user_id: int, amount: int, tx_type: TransactionType,
-                      description: str = "", reference_id: Optional[int] = None) -> Transaction:
+                      description: str = "", reference_id: Optional[int] = None,
+                      commit: bool = True) -> Transaction:
         """Deduct points (positive amount, stored as negative)"""
         if amount <= 0:
             raise ValueError("Amount must be positive for deduct_points")
         user = self.db.query(User).filter(User.id == user_id).first()
         if not user or user.points < amount:
             raise ValueError("Insufficient points")
-        return self._create_transaction(user_id, -amount, tx_type, description, reference_id)
+        return self._create_transaction(user_id, -amount, tx_type, description, reference_id, commit=commit)
 
     def _create_transaction(self, user_id: int, amount: int, tx_type: TransactionType,
-                            description: str, reference_id: Optional[int]) -> Transaction:
+                            description: str, reference_id: Optional[int],
+                            commit: bool = True) -> Transaction:
         user = self.db.query(User).filter(User.id == user_id).with_for_update().first()
         if not user:
             raise ValueError("User not found")
@@ -57,8 +60,11 @@ class WalletService:
             reference_id=reference_id,
         )
         self.db.add(tx)
-        self.db.commit()
-        self.db.refresh(tx)
+        if commit:
+            self.db.commit()
+            self.db.refresh(tx)
+        else:
+            self.db.flush()
         return tx
 
     def can_afford(self, user_id: int, amount: int) -> bool:

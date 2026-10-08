@@ -30,10 +30,19 @@
 - [DONE] Game state chips don't reflect actual user balance - added wallet check in apply_action for double down
 - [DONE] Double down now charges additional bet from user's actual points
 - [DONE] WebSocket reconnection loop - accept() before close(), check close code 1000
+- [DONE] Blackjack per-player settlement against house (win pays 2x bet, blackjack pays 3:2, push refunds bet, bust/loss 0)
+- [DONE] Double down atomic transaction debit with description 'Game Double' and doubled payout
+- [DONE] Atomic single DB transaction for game finish & settlement with double-settle guard
+- [DONE] Frontend result badges read server-side payout & result properties
+- [DONE] Cryptographic SystemRandom RNG and deck reshuffle in from_json (fixes deterministic card draw bug)
+- [DONE] Safe deck draw with reshuffle if exhausted
+- [DONE] Dealer natural check in start_game for instant resolution & settlement
+- [DONE] Added UI rules indicator in Blackjack table ("Dealer hits soft 17 • Blackjack pays 3:2")
 
 ## Next Steps
 - [DONE] Fix bug #1: Double button
 - [DONE] Fix bug #2: Centering  
 - [DONE] Fix bug #3: Finished state verification
+- [DONE] Fix blackjack win payout calculation (was paying net profit instead of full payout)
 - [TODO] Test backend startup (uvicorn in venv)
 - [DONE] Verify useGameSocket hook

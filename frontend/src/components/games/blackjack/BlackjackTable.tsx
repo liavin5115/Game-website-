@@ -80,7 +80,6 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
   const gameState = game.state;
   const myId = user?.id;
   const isMyTurn = game.current_turn_user_id === myId;
-  const myPlayer = gameState.players.find((p: any) => p.id === myId);
   const currentTurnPlayer = gameState.players[gameState.current_player];
 
   const dealerCards = gameState.metadata?.dealer_hidden
@@ -100,6 +99,11 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div className="flex items-center gap-4">
             <h2 className="text-xl font-bold text-gray-900 dark:text-white">♣ Blackjack</h2>
+            <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+              Dealer hits soft 17 • Blackjack pays 3:2
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
             <span className="px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-sm font-medium">
               Pot: {gameState.pot} pts
             </span>
@@ -225,26 +229,20 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
 
           <div className="grid gap-3 mb-6">
             {gameState.players.map((player: any) => {
-              const payout = player.status === 'blackjack'
-                ? Math.floor(player.bet * 2.5)
-                : player.status === 'win'
-                ? player.bet * 2
-                : player.status === 'push'
-                ? player.bet
-                : 0;
-
+              const payout = player.payout !== undefined ? player.payout : 0;
               const profit = payout - player.bet;
+              const resultStatus = player.result || player.status;
 
               return (
                 <div key={player.id} className="flex justify-between items-center p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
                   <span className="font-medium text-gray-900 dark:text-white">{player.username}</span>
                   <div className="flex items-center gap-2">
                     <span className={`text-sm font-bold ${
-                      player.status === 'win' || player.status === 'blackjack' ? 'text-green-600' :
-                      player.status === 'loss' ? 'text-red-600' :
+                      resultStatus === 'win' || resultStatus === 'blackjack' ? 'text-green-600' :
+                      resultStatus === 'loss' || resultStatus === 'bust' ? 'text-red-600' :
                       'text-yellow-600'
                     }`}>
-                      {player.status.toUpperCase()}
+                      {resultStatus.toUpperCase()}
                     </span>
                     <span className={`font-mono font-bold ${
                       profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-yellow-600'

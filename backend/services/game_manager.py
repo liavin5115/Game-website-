@@ -170,33 +170,39 @@ class GameManager:
         if current_player_id != user_id:
             raise ValueError("Not your turn")
 
-        # Handle double down - charge additional bet from wallet
-        if action_type == "double" and game.game_type.value == "blackjack":
-            player_state = next((p for p in state_dict["players"] if p["id"] == user_id), None)
-            if player_state:
-                additional_bet = player_state["bet"]
-                if not self.wallet.can_afford(user_id, additional_bet):
-                    raise ValueError("Insufficient points to double down")
-                self.wallet.deduct_points(
-                    user_id,
-                    additional_bet,
-                    TransactionType.GAME_BUYIN,
-                    f"Double down in blackjack game",
-                    game_id
-                )
+        try:
+            # Handle double down - charge additional bet from wallet
+            if action_type == "double" and game.game_type == GameType.BLACKJACK:
+                player_state = next((p for p in state_dict["players"] if p["id"] == user_id), None)
+                if player_state:
+                    additional_bet = player_state["bet"]
+                    if not self.wallet.can_afford(user_id, additional_bet):
+                        raise ValueError("Insufficient points to double down")
+                    self.wallet.deduct_points(
+                        user_id,
+                        additional_bet,
+                        TransactionType.GAME_BUYIN,
+                        "Game Double",
+                        game_id,
+                        commit=False
+                    )
 
-        # Apply action
-        action = GameAction(type=action_type, amount=amount)
-        game_instance.apply_action(user_id, action)
+            # Apply action
+            action = GameAction(type=action_type, amount=amount)
+            game_instance.apply_action(user_id, action)
 
-        # Check if finished
-        if game_instance.is_finished():
-            self._finish_game(game, game_instance)
-        else:
-            game.state = game_instance.to_json()
+            # Check if finished
+            if game_instance.is_finished():
+                self._finish_game(game, game_instance)
+            else:
+                game.state = game_instance.to_json()
+                game.pot = game_instance.state.pot
 
-        self.db.commit()
-        self.db.refresh(game)
+            self.db.commit()
+            self.db.refresh(game)
+        except Exception:
+            self.db.rollback()
+            raise
 
         # Broadcast update
         await manager.broadcast_game_state(game_id, {"type": "state_changed"})
@@ -204,51 +210,96 @@ class GameManager:
         return game
 
     def _finish_game(self, game: Game, game_instance) -> None:
+        if game.status != GameStatus.IN_PROGRESS:
+            return  # Guard against double settlement
+
+        from datetime import datetime
+        now = datetime.utcnow()
         game.status = GameStatus.FINISHED
-        game.finished_at = __import__('datetime').datetime.utcnow()
+        game.finished_at = now
+        game.pot = game_instance.state.pot
         game.state = game_instance.to_json()
 
         winner_id = game_instance.get_winner()
         if winner_id:
             game.winner_id = winner_id
 
-        # Process payouts
         payouts = game_instance.get_payouts()
-        for player_id, payout in payouts.items():
-            session = self.db.query(GameSession).filter(
-                and_(GameSession.game_id == game.id, GameSession.user_id == player_id)
-            ).first()
-            if session:
-                session.payout = payout
-                session.result = "win" if payout > session.buy_in else "loss" if payout < session.buy_in else "draw"
-                session.left_at = __import__('datetime').datetime.utcnow()
 
-                if payout > session.buy_in:
-                    profit = payout - session.buy_in
+        if game.game_type == GameType.BLACKJACK:
+            for player in game_instance.state.players:
+                player_id = player["id"]
+                payout = payouts.get(player_id, 0)
+                status = player.get("result", player.get("status"))
+
+                session = self.db.query(GameSession).filter(
+                    and_(GameSession.game_id == game.id, GameSession.user_id == player_id)
+                ).first()
+                if session:
+                    session.payout = payout
+                    session.result = status
+                    session.left_at = now
+
+                if payout > 0:
+                    if status == "blackjack":
+                        self.wallet.add_points(
+                            player_id,
+                            payout,
+                            TransactionType.GAME_WIN,
+                            "Blackjack",
+                            game.id,
+                            commit=False
+                        )
+                    elif status == "win":
+                        self.wallet.add_points(
+                            player_id,
+                            payout,
+                            TransactionType.GAME_WIN,
+                            "Game Win",
+                            game.id,
+                            commit=False
+                        )
+                    elif status == "push":
+                        self.wallet.add_points(
+                            player_id,
+                            payout,
+                            TransactionType.REFUND,
+                            "Game Push",
+                            game.id,
+                            commit=False
+                        )
+
+                user = self.db.query(User).filter(User.id == player_id).first()
+                if user:
+                    user.total_games += 1
+                    if status in ("win", "blackjack"):
+                        user.total_wins += 1
+
+        elif game.game_type == GameType.POKER:
+            for player_id, payout in payouts.items():
+                session = self.db.query(GameSession).filter(
+                    and_(GameSession.game_id == game.id, GameSession.user_id == player_id)
+                ).first()
+                if session:
+                    session.payout = payout
+                    session.result = "win" if payout > 0 else "loss"
+                    session.left_at = now
+
+                if payout > 0:
                     self.wallet.add_points(
                         player_id,
-                        profit,
+                        payout,
                         TransactionType.GAME_WIN,
-                        f"Won {game.game_type.value} game",
-                        game.id
-                    )
-                elif payout < session.buy_in:
-                    loss = session.buy_in - payout
-                    self.wallet.deduct_points(
-                        player_id,
-                        loss,
-                        TransactionType.GAME_LOSS,
-                        f"Lost {game.game_type.value} game",
-                        game.id
+                        f"Won poker game",
+                        game.id,
+                        commit=False
                     )
 
-        # Update user stats
-        for player_id, payout in payouts.items():
-            user = self.db.query(User).filter(User.id == player_id).first()
-            if user:
-                user.total_games += 1
-                if payout > game.buy_in:
-                    user.total_wins += 1
+                user = self.db.query(User).filter(User.id == player_id).first()
+                if user:
+                    user.total_games += 1
+                    if payout > 0:
+                        user.total_wins += 1
 
     def get_game(self, game_id: int, user_id: Optional[int] = None) -> Optional[Game]:
         game = self.db.query(Game).filter(Game.id == game_id).first()
@@ -364,10 +415,19 @@ class GameManager:
         game_class = get_game_class(game.game_type.value)
         game_instance = game_class(game.buy_in, players)
         game_instance.start_game()
-        game.state = game_instance.to_json()
 
-        self.db.commit()
-        self.db.refresh(game)
+        try:
+            if game_instance.is_finished():
+                self._finish_game(game, game_instance)
+            else:
+                game.state = game_instance.to_json()
+                game.pot = game_instance.state.pot
+
+            self.db.commit()
+            self.db.refresh(game)
+        except Exception:
+            self.db.rollback()
+            raise
 
         # Broadcast updates
         await manager.broadcast_game_state(game_id, {"type": "state_changed"})

@@ -59,6 +59,8 @@ export interface PlayerState {
   bet: number;
   status: string;
   doubled?: boolean;
+  result?: string;
+  payout?: number;
 }
 
 export interface LobbyGame {

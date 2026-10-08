@@ -3,6 +3,7 @@ import random
 from typing import Optional
 from games.base import BaseGame, GameAction, GameState, GamePhase
 
+_rng = random.SystemRandom()
 
 RANKS = "23456789TJQKA"
 SUITS = "cdhs"
@@ -55,28 +56,46 @@ class BlackjackGame(BaseGame):
         ]
         self.state.phase = GamePhase.WAITING
 
+    def _draw_card(self) -> str:
+        """Safe draw from deck; reshuffle if empty"""
+        if not self.deck:
+            known = set()
+            for p in self.state.players:
+                known.update(p["cards"])
+            known.update(self.dealer_cards)
+            self.deck = [c for c in create_deck() if c not in known]
+            _rng.shuffle(self.deck)
+        return self.deck.pop()
+
     def _check_initial_blackjacks(self) -> None:
         dealer_bj = is_blackjack(self.dealer_cards)
+        if dealer_bj:
+            for player in self.state.players:
+                if is_blackjack(player["cards"]):
+                    player["status"] = "push"
+                    player["result"] = "push"
+                else:
+                    player["status"] = "loss"
+                    player["result"] = "loss"
+            self._play_dealer()
+            return
+
         for player in self.state.players:
             if is_blackjack(player["cards"]):
-                if dealer_bj:
-                    player["status"] = "push"
-                else:
-                    player["status"] = "blackjack"
+                player["status"] = "blackjack"
+                player["result"] = "blackjack"
+
+        if all(p["status"] in ("stand", "bust", "blackjack", "push") for p in self.state.players):
+            self._play_dealer()
 
     def get_valid_actions(self, player_id: int) -> list[str]:
         player = next((p for p in self.state.players if p["id"] == player_id), None)
-        if not player or player["status"] not in ("playing", "blackjack"):
-            return []
-
-        if player["status"] == "blackjack":
+        if not player or player["status"] != "playing":
             return []
 
         actions = ["hit", "stand"]
-        # Can double if: 2 cards, hasn't doubled, and has enough chips for another bet
         if len(player["cards"]) == 2 and not player.get("doubled"):
             actions.append("double")
-        # Split not implemented for simplicity
         return actions
 
     def apply_action(self, player_id: int, action: GameAction) -> GameState:
@@ -85,32 +104,41 @@ class BlackjackGame(BaseGame):
             return self.state
 
         if action.type == "hit":
-            player["cards"].append(self.deck.pop())
+            player["cards"].append(self._draw_card())
             value, _ = hand_value(player["cards"])
             if value > 21:
                 player["status"] = "bust"
             elif value == 21:
-                player["status"] = "stand"  # Auto-stand on 21
+                player["status"] = "stand"
 
         elif action.type == "stand":
             player["status"] = "stand"
 
         elif action.type == "double":
-            if len(player["cards"]) != 2:
+            if len(player["cards"]) != 2 or player.get("doubled"):
                 raise ValueError("Cannot double")
-            # Chip check happens in game_manager via wallet
             player["bet"] *= 2
             player["total_bet"] = player["bet"]
             player["doubled"] = True
-            player["cards"].append(self.deck.pop())
+            player["cards"].append(self._draw_card())
             value, _ = hand_value(player["cards"])
             if value > 21:
                 player["status"] = "bust"
             else:
                 player["status"] = "stand"
 
-        # Update state
+        # Update pot to sum of current bets
+        self.state.pot = sum(p["bet"] for p in self.state.players)
+
+        # Update player state
         self._sync_player_state(player)
+
+        # Advance current_player to next active player if current player finished
+        if player["status"] in ("stand", "bust", "blackjack", "push"):
+            for i, p in enumerate(self.state.players):
+                if p["status"] == "playing":
+                    self.state.current_player = i
+                    break
 
         # Check if all players done
         if all(p["status"] in ("stand", "bust", "blackjack", "push") for p in self.state.players):
@@ -137,11 +165,11 @@ class BlackjackGame(BaseGame):
             value, is_soft = hand_value(self.dealer_cards)
             if value >= 17:
                 if value == 17 and is_soft:  # Hit soft 17
-                    self.dealer_cards.append(self.deck.pop())
+                    self.dealer_cards.append(self._draw_card())
                     self.state.community_cards = self.dealer_cards.copy()
                     continue
                 break
-            self.dealer_cards.append(self.deck.pop())
+            self.dealer_cards.append(self._draw_card())
             self.state.community_cards = self.dealer_cards.copy()
 
         self.state.metadata["dealer_cards"] = self.dealer_cards
@@ -155,21 +183,37 @@ class BlackjackGame(BaseGame):
 
         for player in self.state.players:
             if player["status"] == "bust":
-                continue  # Already lost
-            if player["status"] == "blackjack":
+                player["result"] = "bust"
+                continue
+
+            if is_blackjack(player["cards"]):
                 if dealer_bj:
                     player["status"] = "push"
+                    player["result"] = "push"
                 else:
-                    player["status"] = "win"
+                    player["status"] = "blackjack"
+                    player["result"] = "blackjack"
+                continue
+
+            if dealer_bj:
+                player["status"] = "loss"
+                player["result"] = "loss"
                 continue
 
             player_value, _ = hand_value(player["cards"])
             if dealer_bust or player_value > dealer_value:
                 player["status"] = "win"
+                player["result"] = "win"
             elif player_value == dealer_value:
                 player["status"] = "push"
+                player["result"] = "push"
             else:
                 player["status"] = "loss"
+                player["result"] = "loss"
+
+        payouts = self.get_payouts()
+        for player in self.state.players:
+            player["payout"] = payouts.get(player["id"], 0)
 
     def is_finished(self) -> bool:
         return self.state.phase == GamePhase.FINISHED
@@ -177,7 +221,6 @@ class BlackjackGame(BaseGame):
     def get_winner(self) -> Optional[int]:
         if not self.is_finished():
             return None
-        # Multiple winners possible in blackjack
         winners = [p["id"] for p in self.state.players if p["status"] in ("win", "blackjack")]
         return winners[0] if winners else None
 
@@ -185,23 +228,24 @@ class BlackjackGame(BaseGame):
         payouts = {}
         for player in self.state.players:
             bet = player["bet"]
-            if player["status"] == "blackjack":
-                payouts[player["id"]] = int(bet * 2.5)  # 3:2 payout
-            elif player["status"] == "win":
-                payouts[player["id"]] = bet * 2  # 1:1
-            elif player["status"] == "push":
-                payouts[player["id"]] = bet  # Return bet
+            status = player.get("result", player["status"])
+            if status == "blackjack":
+                payouts[player["id"]] = bet + (bet * 3) // 2  # 3:2 payout (integer math)
+            elif status == "win":
+                payouts[player["id"]] = bet * 2  # 1:1 payout (2x bet returned)
+            elif status == "push":
+                payouts[player["id"]] = bet  # refund bet
             else:
-                payouts[player["id"]] = 0  # Loss
+                payouts[player["id"]] = 0  # Loss / bust
         return payouts
 
     def start_game(self) -> None:
         """Deal cards and begin play"""
-        random.shuffle(self.deck)
+        _rng.shuffle(self.deck)
 
         # Deal to players
         for i, player in enumerate(self.players):
-            player["cards"] = [self.deck.pop(), self.deck.pop()]
+            player["cards"] = [self._draw_card(), self._draw_card()]
             player["bet"] = self.buy_in
             player["status"] = "playing"
             player["total_bet"] = self.buy_in
@@ -213,7 +257,7 @@ class BlackjackGame(BaseGame):
              "cards": p["cards"], "bet": p["bet"], "status": p["status"], "doubled": False}
             for p in self.players
         ]
-        self.dealer_cards = [self.deck.pop(), self.deck.pop()]
+        self.dealer_cards = [self._draw_card(), self._draw_card()]
         self.state.community_cards = [self.dealer_cards[0], "??"]
         self.state.phase = GamePhase.PLAYING
         self.state.current_player = 0
@@ -225,21 +269,20 @@ class BlackjackGame(BaseGame):
     def get_state_for_player(self, player_id: int) -> dict:
         """Get state visible to specific player - in blackjack, all player cards are public, only dealer hole card hidden"""
         state_dict = self.state.to_dict()
-        # In blackjack, all player cards are visible - no hiding
+        if self.dealer_hidden:
+            state_dict["community_cards"] = [self.dealer_cards[0], "??"] if self.dealer_cards else []
+            if "dealer_cards" in state_dict.get("metadata", {}):
+                del state_dict["metadata"]["dealer_cards"]
+        else:
+            state_dict["community_cards"] = self.dealer_cards
+            state_dict["metadata"]["dealer_cards"] = self.dealer_cards
         return state_dict
 
     def to_json(self) -> str:
         import json
+        self.state.metadata["dealer_cards"] = self.dealer_cards
+        self.state.metadata["dealer_hidden"] = self.dealer_hidden
         data = self.state.to_dict()
-        # Hide dealer hole card when dealer_hidden is true
-        if self.dealer_hidden:
-            data["community_cards"] = [self.dealer_cards[0], "??"] if self.dealer_cards else []
-            # Remove metadata.dealer_cards to prevent leak
-            if "dealer_cards" in data.get("metadata", {}):
-                del data["metadata"]["dealer_cards"]
-        else:
-            data["community_cards"] = self.dealer_cards
-            data["metadata"]["dealer_cards"] = self.dealer_cards
         return json.dumps(data)
 
     @classmethod
@@ -249,13 +292,15 @@ class BlackjackGame(BaseGame):
         game = cls(buy_in, players)
         game.state = GameState.from_dict(data)
         game.deck = create_deck()
-        game.dealer_cards = data.get("dealer_cards", [])
-        game.dealer_hidden = data.get("dealer_hidden", True)
+        metadata = data.get("metadata", {})
+        game.dealer_cards = metadata.get("dealer_cards", data.get("dealer_cards", []))
+        game.dealer_hidden = metadata.get("dealer_hidden", data.get("dealer_hidden", True))
 
-        # Remove known cards from deck
+        # Remove known cards from deck and reshuffle remaining
         known = set()
         for p in game.state.players:
             known.update(p["cards"])
         known.update(game.dealer_cards)
         game.deck = [c for c in game.deck if c not in known]
+        _rng.shuffle(game.deck)
         return game
