@@ -6,7 +6,8 @@ from sqlalchemy import and_, or_
 
 from models import Game, GameSession, GameStatus, GameType, User, TransactionType
 from games import get_game_class, get_game_metadata, list_games
-from .wallet import WalletService
+from games.base import GameAction
+from services.wallet import WalletService
 from websocket.manager import manager
 
 
@@ -185,7 +186,6 @@ class GameManager:
                 )
 
         # Apply action
-        from ..games.base import GameAction
         action = GameAction(type=action_type, amount=amount)
         game_instance.apply_action(user_id, action)
 

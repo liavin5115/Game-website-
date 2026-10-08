@@ -1,7 +1,7 @@
 """Blackjack implementation"""
 import random
 from typing import Optional
-from .base import BaseGame, GameAction, GameState, GamePhase
+from games.base import BaseGame, GameAction, GameState, GamePhase
 
 
 RANKS = "23456789TJQKA"

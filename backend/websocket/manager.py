@@ -1,5 +1,5 @@
 """WebSocket connection manager for real-time game updates"""
-from typing import Dict, List, Set
+from typing import Dict, Set
 from fastapi import WebSocket
 import json
 
@@ -8,86 +8,87 @@ class ConnectionManager:
     def __init__(self):
         # game_id -> {user_id: websocket}
         self.game_connections: Dict[int, Dict[int, WebSocket]] = {}
-        # user_id -> set of game_ids they're watching
+        # user_id -> set of game_ids they're connected to
         self.user_games: Dict[int, Set[int]] = {}
         # lobby connections
         self.lobby_connections: Set[WebSocket] = set()
 
     async def connect(self, websocket: WebSocket, game_id: int, user_id: int):
-        await websocket.accept()
-        if game_id not in self.game_connections:
-            self.game_connections[game_id] = {}
-        self.game_connections[game_id][user_id] = websocket
+        # accept() is already done in the route (main.py)
+        self.game_connections.setdefault(game_id, {})[user_id] = websocket
+        self.user_games.setdefault(user_id, set()).add(game_id)
 
-        if user_id not in self.user_games:
-            self.user_games[user_id] = set()
-        self.user_games[user_id].add(game_id)
+    def disconnect(self, game_id: int, user_id: int, websocket: WebSocket | None = None):
+        conns = self.game_connections.get(game_id)
+        if conns is None:
+            return
+        # Ignore stale sockets (e.g. an old tab closing after a newer one connected)
+        if websocket is not None and conns.get(user_id) is not websocket:
+            return
 
-    def disconnect(self, game_id: int, user_id: int):
-        if game_id in self.game_connections:
-            self.game_connections[game_id].pop(user_id, None)
-            if not self.game_connections[game_id]:
-                del self.game_connections[game_id]
+        conns.pop(user_id, None)
+        if not conns:
+            self.game_connections.pop(game_id, None)
 
-        if user_id in self.user_games:
-            self.user_games[user_id].discard(game_id)
-            if not self.user_games[user_id]:
-                del self.user_games[user_id]
+        games = self.user_games.get(user_id)
+        if games is not None:
+            games.discard(game_id)
+            if not games:
+                self.user_games.pop(user_id, None)
+
+    async def _send(self, game_id: int, user_id: int, ws: WebSocket, message: str) -> bool:
+        try:
+            await ws.send_text(message)
+            return True
+        except Exception:
+            self.disconnect(game_id, user_id, ws)
+            return False
 
     async def broadcast_game_state(self, game_id: int, state: dict, exclude_user: int | None = None):
         """Broadcast game state to all connected players in a game"""
-        if game_id not in self.game_connections:
+        conns = self.game_connections.get(game_id)
+        if not conns:
             return
-
         message = json.dumps({"type": "game_state", "payload": state})
-        disconnected = []
-
-        for user_id, ws in self.game_connections[game_id].items():
+        for user_id, ws in list(conns.items()):
             if user_id == exclude_user:
                 continue
-            try:
-                await ws.send_text(message)
-            except Exception:
-                disconnected.append(user_id)
+            await self._send(game_id, user_id, ws, message)
 
-        for uid in disconnected:
-            self.disconnect(game_id, uid)
+    async def broadcast_state_changed(self, game_id: int):
+        """Push-only signal: clients refetch GET /api/games/{id}"""
+        conns = self.game_connections.get(game_id)
+        if not conns:
+            return
+        message = json.dumps({"type": "state_changed"})
+        for user_id, ws in list(conns.items()):
+            await self._send(game_id, user_id, ws, message)
 
     async def broadcast_lobby_update(self, message: dict):
         """Broadcast lobby update to all lobby connections"""
         message_str = json.dumps(message)
-        disconnected = []
-        for ws in self.lobby_connections:
+        for ws in list(self.lobby_connections):
             try:
                 await ws.send_text(message_str)
             except Exception:
-                disconnected.append(ws)
-
-        for ws in disconnected:
-            self.lobby_connections.discard(ws)
+                self.lobby_connections.discard(ws)
 
     async def send_personal(self, user_id: int, message: dict):
         """Send message to user across all their game connections"""
-        if user_id not in self.user_games:
-            return
         message_str = json.dumps(message)
-        for game_id in self.user_games[user_id]:
-            if game_id in self.game_connections and user_id in self.game_connections[game_id]:
-                try:
-                    await self.game_connections[game_id][user_id].send_text(message_str)
-                except Exception:
-                    self.disconnect(game_id, user_id)
+        for game_id in list(self.user_games.get(user_id, ())):
+            ws = self.game_connections.get(game_id, {}).get(user_id)
+            if ws is not None:
+                await self._send(game_id, user_id, ws, message_str)
 
     async def notify_game_event(self, game_id: int, event: str, data: dict):
         """Notify all players in game of an event"""
-        if game_id not in self.game_connections:
+        conns = self.game_connections.get(game_id)
+        if not conns:
             return
         message = json.dumps({"type": "game_event", "event": event, "payload": data})
-        for user_id, ws in self.game_connections[game_id].items():
-            try:
-                await ws.send_text(message)
-            except Exception:
-                self.disconnect(game_id, user_id)
+        for user_id, ws in list(conns.items()):
+            await self._send(game_id, user_id, ws, message)
 
 
 manager = ConnectionManager()

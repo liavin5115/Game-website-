@@ -1,7 +1,7 @@
 """Texas Hold'em Poker implementation"""
 import random
 from typing import Optional
-from .base import BaseGame, GameAction, GameState, GamePhase
+from games.base import BaseGame, GameAction, GameState, GamePhase
 
 
 # Card utilities

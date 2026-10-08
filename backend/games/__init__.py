@@ -1,7 +1,7 @@
 """Game registry - add new games here"""
-from .base import BaseGame, GameAction, GameState
-from .poker import PokerGame
-from .blackjack import BlackjackGame
+from games.base import BaseGame, GameAction, GameState
+from games.poker import PokerGame
+from games.blackjack import BlackjackGame
 
 GAME_REGISTRY = {
     "poker": PokerGame,

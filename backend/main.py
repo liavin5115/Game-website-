@@ -67,7 +67,7 @@ async def websocket_game(websocket: WebSocket, game_id: int, token: str, db: Ses
         return
 
     # Check if user is a participant
-    from .models import GameSession
+    from models import GameSession
     session = db.query(GameSession).filter(
         GameSession.game_id == game_id,
         GameSession.user_id == user_id
