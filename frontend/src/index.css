@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+@theme {
+  --color-felt-50: #f0f7f0;
+  --color-felt-100: #dceadc;
+  --color-felt-200: #bcd5bc;
+  --color-felt-300: #8dbb8d;
+  --color-felt-400: #5a9d5a;
+  --color-felt-500: #2d7d32;
+  --color-felt-600: #256629;
+  --color-felt-700: #1e5020;
+  --color-felt-800: #1a421c;
+  --color-felt-900: #163818;
+  --color-felt-950: #0a1e0c;
+
+  --color-gold-50: #fffbf0;
+  --color-gold-100: #fff3cc;
+  --color-gold-200: #ffe799;
+  --color-gold-300: #ffd666;
+  --color-gold-400: #ffc533;
+  --color-gold-500: #ffb300;
+  --color-gold-600: #cc8f00;
+  --color-gold-700: #996b00;
+  --color-gold-800: #735200;
+  --color-gold-900: #5c4200;
+  --color-gold-950: #332400;
+
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-ui: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    background-color: var(--color-felt-950);
+    color: var(--color-gray-50);
+    font-family: var(--font-ui);
+  }
+
+  .font-display {
+    font-family: var(--font-display);
+  }
+
+  .font-ui {
+    font-family: var(--font-ui);
+  }
+
+  .font-mono {
+    font-family: var(--font-mono);
+  }
+}
+
+@layer components {
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-gray-100 dark:bg-gray-800 rounded;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 dark:bg-gray-600 rounded hover:bg-gray-400 dark:hover:bg-gray-500;
+  }
+
+  /* Focus styles */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-gold-500 ring-offset-2 ring-offset-white dark:ring-offset-gray-950;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-gold-500 text-felt-950;
+  }
+
+  /* Animations */
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes pulse-gold {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(255, 179, 0, 0.4); }
+    50% { box-shadow: 0 0 0 8px rgba(255, 179, 0, 0); }
+  }
+
+  .animate-fade-in {
+    animation: fadeIn 0.2s ease-out;
+  }
+
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+
+  .animate-pulse-gold {
+    animation: pulse-gold 2s infinite;
+  }
+
+  /* Card flip animation */
+  .perspective-1000 {
+    perspective: 1000px;
+  }
+
+  .transform-style-3d {
+    transform-style: preserve-3d;
+  }
+
+  .backface-hidden {
+    backface-visibility: hidden;
+  }
+
+  .rotate-y-180 {
+    transform: rotateY(180deg);
+  }
+}
+
+@layer utilities {
+  /* Text gradient utility */
+  .text-gradient-gold {
+    @apply bg-gradient-to-r from-gold-400 via-gold-500 to-gold-400 bg-clip-text text-transparent;
+  }
+
+  .text-gradient-felt {
+    @apply bg-gradient-to-r from-felt-400 via-felt-500 to-felt-400 bg-clip-text text-transparent;
+  }
+
+  /* Glass effect */
+  .glass {
+    @apply bg-white/10 backdrop-blur-md border border-white/20;
+  }
+
+  .glass-dark {
+    @apply bg-gray-950/80 backdrop-blur-md border border-gray-800;
+  }
+
+  /* Felt texture background */
+  .bg-felt-texture {
+    background-image:
+      radial-gradient(ellipse at center, rgba(45, 125, 50, 0.15) 0%, transparent 70%),
+      linear-gradient(180deg, #1e5020 0%, #256629 50%, #1e5020 100%);
+  }
+}
