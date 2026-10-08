@@ -1,5 +1,6 @@
 /** Axios client with auth interceptors */
 import axios from 'axios';
+import { useAuthStore } from '../stores/authStore';
 
 const API_BASE = '/api';
 
@@ -24,8 +25,14 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
-      localStorage.removeItem('access_token');
-      window.location.href = '/login';
+      const url = error.config?.url || '';
+      // Don't intercept auth login or register endpoints (e.g. wrong credentials)
+      if (!url.includes('/auth/login') && !url.includes('/auth/register')) {
+        useAuthStore.getState().logout();
+        if (window.location.pathname !== '/login') {
+          window.location.replace('/login');
+        }
+      }
     }
     return Promise.reject(error);
   }

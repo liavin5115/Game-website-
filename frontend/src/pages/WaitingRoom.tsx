@@ -1,7 +1,7 @@
 /** Waiting room for games */
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { gamesApi, authApi } from '../api/client';
 import { useAuthStore } from '../stores/authStore';
 import { useGameSocket } from '../hooks/useGameSocket';
@@ -10,7 +10,6 @@ import { Button } from '../components/common/Button';
 export default function WaitingRoom() {
   const { gameId } = useParams<{ gameId: string }>();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const { user } = useAuthStore();
   const [leaving, setLeaving] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -45,7 +44,7 @@ export default function WaitingRoom() {
   // Check if current user is in this game
   const myId = user?.id;
   const isHost = game?.host_id === myId;
-  const isInGame = game?.players.some(p => p.id === myId);
+  const isInGame = game?.players.some((p: any) => p.id === myId);
   const canStart = (game?.players.length || 0) >= (game?.min_players || 0);
 
   const handleLeave = async () => {

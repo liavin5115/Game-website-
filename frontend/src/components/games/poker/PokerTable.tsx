@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { gamesApi } from '../../../api/client';
 import { useGameStore } from '../../../stores/gameStore';
 import { useAuthStore } from '../../../stores/authStore';
-import type { Game, GameState, PlayerState, ValidAction } from '../../../types';
+import type { PlayerState, ValidAction } from '../../../types';
 import { Card } from './Card';
 import { Button } from '../../common/Button';
 import { Modal } from '../../common/Modal';
@@ -42,7 +42,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
         const res = await gamesApi.get(gameId);
         setCurrentGame(res.data);
         setGameState(res.data.state);
-        const me = res.data.state.players.find((p) => p.id === user?.id);
+        const me = res.data.state.players.find((p: any) => p.id === user?.id);
         setMyPlayer(me || null);
       } catch (err) {
         console.error('Failed to load game:', err);

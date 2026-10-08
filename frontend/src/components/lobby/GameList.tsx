@@ -1,11 +1,11 @@
 /** Lobby game list component */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { lobbyApi, gamesApi } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useLobbySocket } from '../../hooks/useLobbySocket';
-import type { LobbyGame } from '../../types/game';
+import type { LobbyGame } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 
@@ -17,7 +17,7 @@ const gameTypeLabels: Record<string, string> = {
 export function GameList() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { user, isAuthenticated, isVerified } = useAuthStore();
   const [selectedType, setSelectedType] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createLoading, setCreateLoading] = useState(false);
@@ -34,6 +34,7 @@ export function GameList() {
       const res = await gamesApi.types();
       return res.data;
     },
+    enabled: isAuthenticated && isVerified,
   });
 
   // Fetch lobby games
@@ -43,7 +44,8 @@ export function GameList() {
       const res = await lobbyApi.games(selectedType || undefined);
       return res.data;
     },
-    refetchInterval: 5000, // Poll every 5s as backup
+    enabled: isAuthenticated && isVerified,
+    refetchInterval: (isAuthenticated && isVerified) ? 5000 : false, // Poll every 5s as backup
   });
 
   const handleCreateGame = async (e: React.FormEvent) => {

@@ -1,10 +1,9 @@
 /** Main layout with header and navigation */
-import { Link, useLocation, NavLink, Outlet } from 'react-router-dom';
+import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 
 export function Layout() {
   const { user, isAuthenticated, logout } = useAuthStore();
-  const location = useLocation();
 
   const navLinks = [
     { path: '/lobby', label: 'Lobby' },

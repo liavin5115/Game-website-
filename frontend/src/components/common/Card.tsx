@@ -1,6 +1,6 @@
 /** Base card components with design system integration */
-import { ReactNode, forwardRef, HTMLAttributes } from 'react';
-import { shadows, radii, transitions } from '../../design/tokens';
+import { forwardRef, HTMLAttributes } from 'react';
+import { shadows } from '../../design/tokens';
 
 interface CardProps extends HTMLAttributes<HTMLDivElement> {
   variant?: 'default' | 'elevated' | 'outlined' | 'felt';

@@ -62,11 +62,6 @@ const sizeStyles = {
   xl: 'px-10 py-4.5 text-xl gap-3',
 };
 
-const fullWidthStyles = {
-  true: 'w-full',
-  false: '',
-};
-
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
   ({
     children,
@@ -84,7 +79,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
     return (
       <button
         ref={ref}
-        className={`${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${fullWidthStyles[fullWidth]} ${className}`}
+        className={`${baseStyles} ${variantStyles[variant]} ${sizeStyles[size]} ${fullWidth ? 'w-full' : ''} ${className}`}
         disabled={isDisabled}
         style={{
           ...style,

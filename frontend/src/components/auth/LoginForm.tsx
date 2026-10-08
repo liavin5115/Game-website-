@@ -5,7 +5,7 @@ import { authApi } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../common/Button';
 import { Input, Label } from '../common/Input';
-import { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter } from '../common/Card';
+import { Card, CardHeader, CardTitle, CardDescription, CardFooter } from '../common/Card';
 import { FeltBackgroundCSS } from '../../design/Background';
 
 export function LoginForm() {

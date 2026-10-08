@@ -38,11 +38,14 @@
 - [DONE] Safe deck draw with reshuffle if exhausted
 - [DONE] Dealer natural check in start_game for instant resolution & settlement
 - [DONE] Added UI rules indicator in Blackjack table ("Dealer hits soft 17 • Blackjack pays 3:2")
+- [DONE] Fixed auth redirect loop between /lobby and /login (verified auth state on load, single logout on 401, preserved /auth/login error handling, unauthenticated polling guards)
+- [DONE] Configured stable SECRET_KEY loading from .env with explicit 401 error reasons (Token expired, Invalid token, User not found)
 
 ## Next Steps
 - [DONE] Fix bug #1: Double button
 - [DONE] Fix bug #2: Centering  
 - [DONE] Fix bug #3: Finished state verification
 - [DONE] Fix blackjack win payout calculation (was paying net profit instead of full payout)
+- [DONE] Fix auth 401 redirect loop
 - [TODO] Test backend startup (uvicorn in venv)
 - [DONE] Verify useGameSocket hook

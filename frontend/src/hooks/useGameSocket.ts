@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { useAuthStore } from '../stores/authStore';
 
 export function useGameSocket(gameId: number | null) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -8,9 +9,10 @@ export function useGameSocket(gameId: number | null) {
   const mountedRef = useRef(true);
   const reconnectAttemptsRef = useRef(0);
   const queryClient = useQueryClient();
+  const { isAuthenticated, isVerified } = useAuthStore();
 
   const connect = useCallback(() => {
-    if (!gameId || !mountedRef.current) return;
+    if (!gameId || !mountedRef.current || !isAuthenticated || !isVerified) return;
 
     const token = localStorage.getItem('access_token');
     if (!token) return;
@@ -42,7 +44,7 @@ export function useGameSocket(gameId: number | null) {
 
       ws.onclose = (event) => {
         // Don't reconnect if unmounting or intentional close
-        if (!mountedRef.current) return;
+        if (!mountedRef.current || !localStorage.getItem('access_token')) return;
 
         // Start polling fallback
         if (!pollingIntervalRef.current) {
@@ -56,7 +58,7 @@ export function useGameSocket(gameId: number | null) {
           const delay = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
           reconnectAttemptsRef.current++;
           reconnectTimeoutRef.current = window.setTimeout(() => {
-            if (mountedRef.current) {
+            if (mountedRef.current && localStorage.getItem('access_token')) {
               connect();
             }
           }, delay);
@@ -69,9 +71,10 @@ export function useGameSocket(gameId: number | null) {
     } catch (e) {
       console.error('WebSocket connection failed:', e);
     }
-  }, [gameId, queryClient]);
+  }, [gameId, queryClient, isAuthenticated, isVerified]);
 
   useEffect(() => {
+    if (!isAuthenticated || !isVerified) return;
     mountedRef.current = true;
     connect();
 
@@ -79,13 +82,16 @@ export function useGameSocket(gameId: number | null) {
       mountedRef.current = false;
       if (wsRef.current) {
         wsRef.current.close(1000, 'Unmounting');
+        wsRef.current = null;
       }
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = undefined;
       }
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = undefined;
       }
     };
-  }, [connect]);
+  }, [connect, isAuthenticated, isVerified]);
 }

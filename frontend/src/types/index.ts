@@ -63,18 +63,24 @@ export interface PlayerState {
   payout?: number;
 }
 
+export interface LobbyPlayer {
+  id: number;
+  username: string;
+  seat: number;
+  bet: number;
+  status: string;
+}
+
 export interface LobbyGame {
   id: number;
   game_type: string;
   status: string;
   buy_in: number;
   pot: number;
-  player1_id: number;
-  player1_name: string;
-  player2_id: number | null;
-  player2_name: string | null;
-  current_players: number;
+  host_id: number;
   max_players: number;
+  min_players: number;
+  players: LobbyPlayer[];
   created_at: string;
 }
 
