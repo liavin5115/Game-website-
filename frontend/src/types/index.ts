@@ -38,6 +38,10 @@ export interface Game {
   started_at: string | null;
   finished_at: string | null;
   next_game_id?: number;
+  turn_deadline?: string | null;
+  turn_seq?: number;
+  server_time?: string;
+  turn_seconds?: number;
 }
 
 export interface GameState {
@@ -62,6 +66,8 @@ export interface PlayerState {
   doubled?: boolean;
   result?: string;
   payout?: number;
+  auto_stood?: boolean;
+  away?: boolean;
 }
 
 export interface LobbyPlayer {
@@ -70,6 +76,8 @@ export interface LobbyPlayer {
   seat: number;
   bet: number;
   status: string;
+  auto_stood?: boolean;
+  away?: boolean;
 }
 
 export interface LobbyGame {
@@ -127,6 +135,7 @@ export interface ActionRequest {
   game_id: number;
   action: string;
   amount?: number;
+  turn_seq?: number;
 }
 
 export interface ValidAction {

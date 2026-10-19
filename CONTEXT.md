@@ -170,7 +170,7 @@ game_website/
 
 **Real-time status lives in `progress.md`** — update it after every completed task.
 
-### ✅ Completed (Task 1 + Task 2)
+### ✅ Completed (Task 1 + Task 2 + Task 3)
 - **Wallet stats**: SQL aggregates from finished `GameSession`; excludes non-game TX; refetches on game finish
 - **Double-down bug fix**: `session.buy_in = bet` (was `bet * 2`)
 - **Rematch ("Play Again")**:
@@ -180,6 +180,14 @@ game_website/
   - Returns 409 if next game started/full/cancelled
   - Frontend button: "Play Again (X pts)" / "Join Rematch", disabled with reason when balance < buy-in
 - **SQLite connection pool fix**: `NullPool` + WS endpoints manage own DB sessions
+- **Turn Timer (Blackjack)**:
+  - Server-owned clock: `turn_deadline` column (UTC, indexed), `turn_seq` in state
+  - Config: `TURN_SECONDS=30`, `TURN_TIMEOUT_MAX_STRIKES=2`
+  - Auto-stand on timeout (same settlement path), `auto_stowed=true`, strikes→"away"
+  - Background sweeper (1s) + lazy deadline check on GET/POST
+  - Race-safe: `turn_seq` in action, single transaction with row lock
+  - Response: `turn_deadline`, `turn_seq`, `server_time`, `turn_seconds`, per-player `auto_stood`/`away`
+  - Frontend: countdown progress bar (250ms), `clockOffset` sync, layout-stable, badges, 409 handling
 
 ### 🟡 Pending / Known Issues
 - Join concurrency safety (SQLite `with_for_update` not fully supported) — documented in `progress.md`

@@ -1,39 +1,89 @@
 """FastAPI application entry point"""
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+import asyncio
+import logging
 
 from config import get_settings
-from database import init_db, get_db
-from models import User
+from database import init_db, get_db, SessionLocal
+from models import User, Game, GameStatus
 from auth import get_current_user, get_current_user_optional, decode_token
 from routers import auth as auth_router, wallet as wallet_router, games as games_router, lobby as lobby_router
 from websocket.manager import manager
 from services.game_manager import GameManager
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG)
+# Background task for turn timeout sweeper
+sweeper_task: asyncio.Task | None = None
 
-# CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+async def turn_timeout_sweeper():
+    """Background task that checks for expired turn deadlines every second."""
+    while True:
+        try:
+            await asyncio.sleep(1)
+            db = SessionLocal()
+            try:
+                # Find in_progress games with expired turn_deadline
+                now = __import__('datetime').datetime.utcnow()
+                games = db.query(Game).filter(
+                    Game.status == GameStatus.IN_PROGRESS,
+                    Game.turn_deadline.isnot(None),
+                    Game.turn_deadline <= now
+                ).all()
 
-# Routers
-app.include_router(auth_router.router, prefix="/api")
-app.include_router(wallet_router.router, prefix="/api")
-app.include_router(games_router.router, prefix="/api")
-app.include_router(lobby_router.router, prefix="/api")
+                for game in games:
+                    try:
+                        # Lock the game row
+                        game_locked = db.query(Game).filter(Game.id == game.id).with_for_update().first()
+                        if not game_locked or game_locked.status != GameStatus.IN_PROGRESS:
+                            continue
+
+                        players_data = []
+                        from models import GameSession
+                        sessions = db.query(GameSession).filter(GameSession.game_id == game.id).order_by(GameSession.position).all()
+                        for s in sessions:
+                            u = db.query(User).filter(User.id == s.user_id).first()
+                            if u:
+                                players_data.append({"id": u.id, "username": u.username, "chips": s.buy_in})
+
+                        from games import get_game_class
+                        game_class = get_game_class(game_locked.game_type.value)
+                        game_instance = game_class.from_json(game_locked.state, game_locked.buy_in, players_data)
+
+                        gm = GameManager(db)
+                        timeout_applied = gm._check_and_apply_timeout(game_locked, game_instance)
+                        if timeout_applied:
+                            db.commit()
+                            await manager.broadcast_game_state(game.id, {"type": "state_changed"})
+                    except Exception as e:
+                        logger.error(f"Sweeper error for game {game.id}: {e}")
+                        db.rollback()
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Sweeper loop error: {e}")
 
 
-@app.on_event("startup")
-def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global sweeper_task
     init_db()
+    sweeper_task = asyncio.create_task(turn_timeout_sweeper())
+    yield
+    if sweeper_task:
+        sweeper_task.cancel()
+        try:
+            await sweeper_task
+        except asyncio.CancelledError:
+            pass
+
+app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG, lifespan=lifespan)
 
 
 @app.get("/health")

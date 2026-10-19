@@ -6,6 +6,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from database import Base
+from sqlalchemy import func
 
 
 class GameType(PyEnum):
@@ -67,6 +68,7 @@ class Game(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    turn_deadline: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
     # Game-specific state (JSON)
     state: Mapped[str] = mapped_column(String, default="{}")  # JSON serialized game state

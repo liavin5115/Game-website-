@@ -64,7 +64,7 @@ export const gamesApi = {
   join: (data: { game_id: number }) => api.post('/games/join', data),
   leave: (data: { game_id: number }) => api.post('/games/leave', data),
   start: (data: { game_id: number }) => api.post('/games/start', data),
-  action: (data: { game_id: number; action: string; amount?: number }) =>
+  action: (data: { game_id: number; action: string; amount?: number; turn_seq?: number }) =>
     api.post('/games/action', data),
   rematch: (data: { game_id: number }) => api.post('/games/rematch', data),
   get: (gameId: number) => api.get(`/games/${gameId}`),

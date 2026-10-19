@@ -72,5 +72,20 @@
 - [DONE] Fix auth 401 redirect loop
 - [DONE] Task 1: Fix wallet stats (double down bug fixed, refetch on game finish, discrepancies reported)
 - [DONE] Task 2: Add "Play again" (rematch) to blackjack
+- [DONE] Task 3: Add turn timer to blackjack
+  - [DONE] Backend: turn_deadline column on games table (nullable DATETIME, indexed)
+  - [DONE] Backend: TURN_SECONDS=30, TURN_TIMEOUT_MAX_STRIKES=2 config
+  - [DONE] Backend: On game start/turn change: set turn_deadline = now + TURN_SECONDS, turn_seq++
+  - [DONE] Backend: Timeout = automatic STAND (same code path), mark auto_stood=true
+  - [DONE] Backend: Strikes: 2 timeouts in a row -> status "away" (auto-stands instantly)
+  - [DONE] Backend: Background sweeper task (every 1s) + lazy check in GET /api/games/{id} and POST /api/games/action
+  - [DONE] Backend: Race safety with turn_seq, single DB transaction with row lock
+  - [DONE] Backend: Game response adds turn_deadline, turn_seq, server_time, turn_seconds, per-player auto_stood/away
+  - [DONE] Frontend: Countdown progress bar + seconds, red at 5s, clockOffset from server_time
+  - [DONE] Frontend: One setInterval at 250ms with cleanup
+  - [DONE] Frontend: Never decide at 0 on client, wait for server push, refetch after 2s if nothing
+  - [DONE] Frontend: "Auto-stand (timed out)" badge, "Away" badge
+  - [DONE] Frontend: Buttons disabled at 0 and during request, send turn_seq, 409 -> silent refetch + toast
+  - [DONE] Frontend: Reserve space for countdown (layout stability)
 - [TODO] Test backend startup (uvicorn in venv)
 - [DONE] Verify useGameSocket hook

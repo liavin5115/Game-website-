@@ -1,5 +1,5 @@
 /** Blackjack table component */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { gamesApi, authApi } from '../../../api/client';
@@ -7,6 +7,7 @@ import { useAuthStore } from '../../../stores/authStore';
 import { useGameSocket } from '../../../hooks/useGameSocket';
 import { Card } from '../poker/Card';
 import { Button } from '../../common/Button';
+
 
 const actionLabels: Record<string, string> = {
   hit: 'Hit',
@@ -21,6 +22,11 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [rematchLoading, setRematchLoading] = useState(false);
+  const [clockOffset, setClockOffset] = useState(0); // server_time - Date.now()
+  const [turnSeq, setTurnSeq] = useState(0);
+  const countdownIntervalRef = useRef<number>();
+  const countdownRef = useRef(0);
+  const refetchTimeoutRef = useRef<number>();
 
   useGameSocket(gameId);
 
@@ -30,7 +36,70 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
       const res = await gamesApi.get(gameId);
       return res.data;
     },
+    refetchInterval: false,
   });
+
+  // Update clockOffset and turnSeq from server response
+  useEffect(() => {
+    if (game?.server_time) {
+      const serverTime = new Date(game.server_time).getTime();
+      setClockOffset(serverTime - Date.now());
+    }
+    if (game?.turn_seq !== undefined) {
+      setTurnSeq(game.turn_seq);
+    }
+  }, [game?.server_time, game?.turn_seq]);
+
+  // Countdown timer
+  useEffect(() => {
+    const turnDeadline = game?.turn_deadline;
+    const isInProgress = game?.status === 'in_progress';
+    const myTurn = game?.current_turn_user_id === user?.id;
+
+    if (countdownIntervalRef.current) {
+      clearInterval(countdownIntervalRef.current);
+      countdownIntervalRef.current = undefined;
+    }
+    if (refetchTimeoutRef.current) {
+      clearTimeout(refetchTimeoutRef.current);
+      refetchTimeoutRef.current = undefined;
+    }
+
+    if (!isInProgress || !turnDeadline || !myTurn) {
+      countdownRef.current = 0;
+      return;
+    }
+
+    const deadlineMs = new Date(turnDeadline).getTime();
+
+    const tick = () => {
+      const now = Date.now() + clockOffset;
+      const remaining = Math.max(0, Math.ceil((deadlineMs - now) / 1000));
+      countdownRef.current = remaining;
+
+      if (remaining <= 0) {
+        // At 0, wait for server push (state_changed -> refetch via useGameSocket)
+        // If nothing arrives within 2s, refetch once
+        if (!refetchTimeoutRef.current) {
+          refetchTimeoutRef.current = window.setTimeout(() => {
+            queryClient.invalidateQueries({ queryKey: ['game', gameId] });
+          }, 2000);
+        }
+      }
+    };
+
+    tick();
+    countdownIntervalRef.current = window.setInterval(tick, 250);
+
+    return () => {
+      if (countdownIntervalRef.current) {
+        clearInterval(countdownIntervalRef.current);
+      }
+      if (refetchTimeoutRef.current) {
+        clearTimeout(refetchTimeoutRef.current);
+      }
+    };
+  }, [game?.status, game?.turn_deadline, game?.current_turn_user_id, clockOffset, gameId, queryClient, user?.id]);
 
   useEffect(() => {
     if (game?.status === 'waiting') {
@@ -43,7 +112,6 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
       authApi.me().then(res => {
         useAuthStore.getState().setAuth(res.data, localStorage.getItem('access_token') || '');
       });
-      // Trigger wallet stats refetch
       window.dispatchEvent(new CustomEvent('wallet:refetch'));
     }
   }, [game?.status]);
@@ -56,18 +124,15 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     try {
       const res = await gamesApi.rematch({ game_id: gameId });
       const newGame = res.data;
-      
-      // Refresh balance
+
       const meRes = await authApi.me();
       updatePoints(meRes.data.points);
-      
-      // Navigate to waiting room for the new game
+
       navigate(`/game/${newGame.id}/waiting`);
     } catch (err: any) {
       const detail = err.response?.data?.detail || 'Rematch failed';
       if (err.response?.status === 409) {
         setError(detail);
-        // For 409, show message but don't navigate - user can click Back to Lobby
       } else {
         setError(detail);
       }
@@ -76,20 +141,27 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     }
   };
 
-  const handleAction = async (actionType: string) => {
+  const handleAction = useCallback(async (actionType: string) => {
     if (loading) return;
     setLoading(true);
     setError('');
 
     try {
-      await gamesApi.action({ game_id: gameId, action: actionType });
+      await gamesApi.action({ game_id: gameId, action: actionType, turn_seq: turnSeq });
       queryClient.invalidateQueries({ queryKey: ['game', gameId] });
     } catch (err: any) {
-      setError(err.response?.data?.detail || 'Action failed');
+      if (err.response?.status === 409) {
+        // Turn expired or not your turn - silent refetch + small toast
+        queryClient.invalidateQueries({ queryKey: ['game', gameId] });
+        setError('Turn expired');
+        setTimeout(() => setError(''), 2000);
+      } else {
+        setError(err.response?.data?.detail || 'Action failed');
+      }
     } finally {
       setLoading(false);
     }
-  };
+  }, [gameId, turnSeq, loading, queryClient]);
 
   const getHandValue = (cards: string[]) => {
     let total = 0;
@@ -103,6 +175,11 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     while (total > 21 && aces > 0) { total -= 10; aces--; }
     return total;
   };
+
+  const remaining = countdownRef.current;
+  const turnSeconds = game?.turn_seconds ?? 30;
+  const progress = turnSeconds > 0 ? Math.max(0, Math.min(100, (remaining / turnSeconds) * 100)) : 0;
+  const isLowTime = remaining <= 5 && remaining > 0;
 
   if (isLoading || !game) {
     return <div className="flex items-center justify-center h-64 text-gray-500">Loading game...</div>;
@@ -173,6 +250,8 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
           const isCurrentPlayer = player.id === myId;
           const isCurrentTurn = gameState.players[gameState.current_player]?.id === player.id;
           const playerValue = getHandValue(player.cards);
+          const isAutoStood = player.auto_stood === true;
+          const isAway = player.away === true;
 
           return (
             <div
@@ -182,9 +261,15 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
               }`}
             >
               <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <span className="font-semibold text-gray-900 dark:text-white">{player.username}</span>
                   {isCurrentPlayer && <span className="text-xs text-yellow-600 font-medium">(You)</span>}
+                  {isAutoStood && (
+                    <span className="text-xs bg-orange-500 text-white px-2 py-0.5 rounded font-medium">Auto-stand (timed out)</span>
+                  )}
+                  {isAway && (
+                    <span className="text-xs bg-gray-500 text-white px-2 py-0.5 rounded font-medium">Away</span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {isCurrentTurn && (
@@ -205,7 +290,7 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
                 </div>
               </div>
 
-              <div className="flex items-center justify-center gap-2">
+              <div className="flex items-center justify-center gap-2 flex-wrap">
                 <span className="inline-block px-3 py-1 bg-gray-100 dark:bg-gray-700 rounded-full text-sm font-medium text-gray-900 dark:text-white">
                   {playerValue}
                 </span>
@@ -226,6 +311,33 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
         })}
       </div>
 
+      {/* Countdown Timer for Active Player */}
+      {game.status === 'in_progress' && isMyTurn && (
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700" role="timer" aria-live="polite">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Time to act</span>
+            <span className={`text-sm font-mono font-bold ${isLowTime ? 'text-red-600' : 'text-gray-700 dark:text-gray-300'}`}>
+              {remaining}s
+            </span>
+          </div>
+          <div className="h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`h-full transition-all duration-250 ease-linear ${isLowTime ? 'bg-red-500' : 'bg-yellow-500'}`}
+              style={{ width: `${progress}%` }}
+              role="progressbar"
+              aria-valuenow={remaining}
+              aria-valuemin={0}
+              aria-valuemax={turnSeconds}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Countdown placeholder for layout stability when not my turn */}
+      {game.status === 'in_progress' && !isMyTurn && (
+        <div className="h-14" aria-hidden="true" />
+      )}
+
       {/* Action Bar */}
       {game.status === 'in_progress' && (
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border dark:border-gray-700">
@@ -237,7 +349,7 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
                     key={action}
                     variant={action === 'stand' ? 'secondary' : 'primary'}
                     onClick={() => handleAction(action)}
-                    disabled={loading}
+                    disabled={loading || remaining <= 0}
                     className="min-w-[120px]"
                   >
                     {actionLabels[action] || action}
@@ -287,9 +399,9 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Button 
-              onClick={handleRematch} 
-              loading={rematchLoading} 
+            <Button
+              onClick={handleRematch}
+              loading={rematchLoading}
               disabled={rematchLoading || (user?.points ?? 0) < game.buy_in}
               className="min-w-[180px]"
             >

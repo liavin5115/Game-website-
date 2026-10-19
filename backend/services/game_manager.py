@@ -1,5 +1,6 @@
 """Game Manager - orchestrates game lifecycle"""
 import json
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -9,12 +10,92 @@ from games import get_game_class, get_game_metadata, list_games
 from games.base import GameAction
 from services.wallet import WalletService
 from websocket.manager import manager
+from config import get_settings
 
 
 class GameManager:
     def __init__(self, db: Session):
         self.db = db
         self.wallet = WalletService(db)
+        self.settings = get_settings()
+
+    def _now_utc(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    def _set_turn_deadline(self, game: Game, game_instance, advance_seq: bool = True) -> None:
+        """Set turn_deadline and increment turn_seq in state metadata."""
+        if game.status != GameStatus.IN_PROGRESS:
+            game.turn_deadline = None
+            return
+
+        # Dealer's turn has no timer
+        state_dict = game_instance.state.to_dict()
+        current_player_idx = state_dict.get("current_player", 0)
+        players = state_dict.get("players", [])
+        if current_player_idx < len(players):
+            current_player = players[current_player_idx]
+            if current_player.get("status") != "playing":
+                game.turn_deadline = None
+                return
+
+        game.turn_deadline = self._now_utc().replace(tzinfo=None) + \
+            __import__('datetime').timedelta(seconds=self.settings.TURN_SECONDS)
+
+        if advance_seq:
+            metadata = state_dict.get("metadata", {})
+            metadata["turn_seq"] = metadata.get("turn_seq", 0) + 1
+            state_dict["metadata"] = metadata
+            game.state = json.dumps(state_dict)
+            game_instance.state = game_instance.state.from_dict(state_dict)
+
+    def _check_and_apply_timeout(self, game: Game, game_instance) -> bool:
+        """Check if turn_deadline expired and apply auto-stand. Returns True if timeout applied."""
+        if not game.turn_deadline or game.status != GameStatus.IN_PROGRESS:
+            return False
+
+        if self._now_utc().replace(tzinfo=None) < game.turn_deadline:
+            return False
+
+        # Timeout - apply auto-stand for current player
+        state_dict = game_instance.state.to_dict()
+        current_player_idx = state_dict.get("current_player", 0)
+        players = state_dict.get("players", [])
+        if current_player_idx >= len(players):
+            return False
+
+        current_player = players[current_player_idx]
+        if current_player.get("status") != "playing":
+            return False
+
+        player_id = current_player["id"]
+
+        # Update strikes
+        metadata = state_dict.get("metadata", {})
+        strikes = metadata.get("timeout_strikes", {}).get(str(player_id), 0)
+        strikes += 1
+        if "timeout_strikes" not in metadata:
+            metadata["timeout_strikes"] = {}
+        metadata["timeout_strikes"][str(player_id)] = strikes
+
+        # Mark auto_stood and away if max strikes reached
+        current_player["auto_stood"] = True
+        if strikes >= self.settings.TURN_TIMEOUT_MAX_STRIKES:
+            current_player["status"] = "away"
+
+        # Apply stand action (same code path)
+        action = GameAction(type="stand", amount=0)
+        game_instance.apply_action(player_id, action)
+
+        # Update state with strikes and auto_stood
+        new_state_dict = game_instance.state.to_dict()
+        new_state_dict["metadata"] = metadata
+        game.state = json.dumps(new_state_dict)
+        game_instance.state = game_instance.state.from_dict(new_state_dict)
+
+        return True
+
+    def _get_server_time(self) -> datetime:
+        return self._now_utc()
 
     def list_available_games(self) -> list[dict]:
         return list_games()
@@ -156,20 +237,40 @@ class GameManager:
             for s in sessions
         ]
 
-    async def apply_action(self, game_id: int, user_id: int, action_type: str, amount: int = 0) -> Game:
-        game = self.db.query(Game).filter(Game.id == game_id).first()
+    async def apply_action(self, game_id: int, user_id: int, action_type: str, amount: int = 0, turn_seq: int = 0) -> Game:
+        game = self.db.query(Game).filter(Game.id == game_id).with_for_update().first()
         if not game:
             raise ValueError("Game not found")
 
         if game.status != GameStatus.IN_PROGRESS:
             raise ValueError("Game is not in progress")
 
-        # Verify it's user's turn
         game_class = get_game_class(game.game_type.value)
         players_data = self._get_players_data(game_id)
         game_instance = game_class.from_json(game.state, game.buy_in, players_data)
 
         state_dict = game_instance.state.to_dict()
+        metadata = state_dict.get("metadata", {})
+        current_turn_seq = metadata.get("turn_seq", 0)
+
+        # Race safety: reject stale turn_seq
+        if turn_seq and turn_seq != current_turn_seq:
+            raise ValueError("Turn expired")
+
+        # Lazy deadline check - apply timeout if expired
+        timeout_applied = self._check_and_apply_timeout(game, game_instance)
+        if timeout_applied:
+            # Re-read state after timeout
+            state_dict = game_instance.state.to_dict()
+            metadata = state_dict.get("metadata", {})
+            current_player_id = state_dict["players"][state_dict["current_player"]]["id"]
+            if current_player_id != user_id:
+                self.db.commit()
+                self.db.refresh(game)
+                await manager.broadcast_game_state(game_id, {"type": "state_changed"})
+                raise ValueError("Turn expired")
+
+        # Verify it's user's turn (after potential timeout)
         current_player_id = state_dict["players"][state_dict["current_player"]]["id"]
         if current_player_id != user_id:
             raise ValueError("Not your turn")
@@ -196,14 +297,21 @@ class GameManager:
                     if session:
                         session.buy_in = player_state["bet"]
 
+            # Reset timeout strikes on manual action
+            if "timeout_strikes" in metadata and str(user_id) in metadata["timeout_strikes"]:
+                metadata["timeout_strikes"][str(user_id)] = 0
+
             # Apply action
             action = GameAction(type=action_type, amount=amount)
             game_instance.apply_action(user_id, action)
 
             # Check if finished
             if game_instance.is_finished():
+                game.turn_deadline = None
                 self._finish_game(game, game_instance)
             else:
+                # Set new turn deadline for next player
+                self._set_turn_deadline(game, game_instance, advance_seq=True)
                 game.state = game_instance.to_json()
                 game.pot = game_instance.state.pot
 
@@ -226,6 +334,7 @@ class GameManager:
         now = datetime.utcnow()
         game.status = GameStatus.FINISHED
         game.finished_at = now
+        game.turn_deadline = None
         game.pot = game_instance.state.pot
         game.state = game_instance.to_json()
 
@@ -314,6 +423,14 @@ class GameManager:
         game = self.db.query(Game).filter(Game.id == game_id).first()
         if not game:
             return None
+
+        # Lazy deadline check for in_progress games
+        if game.status == GameStatus.IN_PROGRESS:
+            game_class = get_game_class(game.game_type.value)
+            players_data = self._get_players_data(game_id)
+            game_instance = game_class.from_json(game.state, game.buy_in, players_data)
+            self._check_and_apply_timeout(game, game_instance)
+            self.db.commit()
 
         # Return state visible to user
         if user_id:
@@ -417,13 +534,24 @@ class GameManager:
 
         # Start the game
         game.status = GameStatus.IN_PROGRESS
-        game.started_at = __import__('datetime').datetime.utcnow()
+        game.started_at = self._now_utc().replace(tzinfo=None)
 
         # Initialize game state for play
         players = self._get_players_data(game_id)
         game_class = get_game_class(game.game_type.value)
         game_instance = game_class(game.buy_in, players)
         game_instance.start_game()
+
+        # Initialize turn_seq in metadata
+        state_dict = game_instance.state.to_dict()
+        if "metadata" not in state_dict:
+            state_dict["metadata"] = {}
+        state_dict["metadata"]["turn_seq"] = 1
+        state_dict["metadata"]["timeout_strikes"] = {}
+        game_instance.state = game_instance.state.from_dict(state_dict)
+
+        # Set initial turn deadline
+        self._set_turn_deadline(game, game_instance, advance_seq=False)
 
         try:
             if game_instance.is_finished():

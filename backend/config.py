@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     INITIAL_POINTS: int = 1000
     DAILY_BONUS: int = 100
 
+    # Turn Timer
+    TURN_SECONDS: int = 30
+    TURN_TIMEOUT_MAX_STRIKES: int = 2
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
 

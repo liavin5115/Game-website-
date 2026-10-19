@@ -26,6 +26,7 @@ class ActionRequest(BaseModel):
     game_id: int
     action: str
     amount: int = 0
+    turn_seq: int = 0
 
 
 class LeaveGameRequest(BaseModel):
@@ -58,6 +59,10 @@ class GameResponse(BaseModel):
     started_at: Optional[str]
     finished_at: Optional[str]
     next_game_id: Optional[int] = None
+    turn_deadline: Optional[str] = None
+    turn_seq: int = 0
+    server_time: str
+    turn_seconds: int = 30
 
 
 class GameListResponse(BaseModel):
@@ -124,9 +129,9 @@ async def start_game(request: StartGameRequest, current_user: User = Depends(get
 async def game_action(request: ActionRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     manager = GameManager(db)
     try:
-        await manager.apply_action(request.game_id, current_user.id, request.action, request.amount)
+        await manager.apply_action(request.game_id, current_user.id, request.action, request.amount, request.turn_seq)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400 if "Turn expired" not in str(e) and "Not your turn" not in str(e) else 409, detail=str(e))
     game = manager.get_game(request.game_id, current_user.id)
     return game_to_response(game, current_user.id, db)
 
@@ -162,6 +167,10 @@ async def rematch_game(request: RematchRequest, current_user: User = Depends(get
 def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     import json
     from games import get_game_metadata, get_game_class
+    from config import get_settings
+    from datetime import datetime, timezone
+
+    settings = get_settings()
 
     state_dict = {}
     if game.state:
@@ -183,13 +192,20 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     sessions = db.query(GameSession).filter(GameSession.game_id == game.id).order_by(GameSession.position).all()
     users = db.query(User).filter(User.id.in_([s.user_id for s in sessions])).all()
     user_map = {u.id: u for u in users}
+
+    # Get player state from game state for auto_stood/away
+    players_state = state_dict.get("players", [])
+    player_state_map = {p["id"]: p for p in players_state}
+
     players = [
         {
             "id": s.user_id,
             "username": user_map[s.user_id].username,
             "seat": s.position,
             "bet": s.buy_in,
-            "status": s.result or "playing" if game.status.value == "in_progress" else "waiting"
+            "status": s.result or "playing" if game.status.value == "in_progress" else "waiting",
+            "auto_stood": player_state_map.get(s.user_id, {}).get("auto_stood", False),
+            "away": player_state_map.get(s.user_id, {}).get("status") == "away",
         }
         for s in sessions if s.user_id in user_map
     ]
@@ -200,6 +216,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     # Get current turn and valid actions for in_progress games
     current_turn_user_id = None
     my_valid_actions = []
+    turn_seq = state_dict.get("metadata", {}).get("turn_seq", 0)
 
     if game.status.value == "in_progress" and state_dict:
         # Current player
@@ -236,6 +253,10 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
         "started_at": game.started_at.isoformat() if game.started_at else None,
         "finished_at": game.finished_at.isoformat() if game.finished_at else None,
         "next_game_id": next_game_id,
+        "turn_deadline": game.turn_deadline.isoformat() + "Z" if game.turn_deadline else None,
+        "turn_seq": turn_seq,
+        "server_time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "turn_seconds": settings.TURN_SECONDS,
     }
 
 
