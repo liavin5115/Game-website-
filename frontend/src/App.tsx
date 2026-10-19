@@ -2,8 +2,8 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/common/Layout';
 import { useAuthStore } from './stores/authStore';
-import { authApi } from './api/client';
-import { useEffect } from 'react';
+import { authApi, gamesApi } from './api/client';
+import { useEffect, useState } from 'react';
 
 // Pages
 import LoginPage from './pages/Login';
@@ -39,6 +39,11 @@ function PublicOnlyRoute({ children }: { children: React.ReactNode }) {
 
 function App() {
   const isHydrated = useAuthStore((s) => s.isHydrated);
+  const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isVerified = useAuthStore((s) => s.isVerified);
+  const [activeGameChecked, setActiveGameChecked] = useState(false);
+  const [showReturnBanner, setShowReturnBanner] = useState(false);
+  const [activeGame, setActiveGame] = useState<{ id: number; status: string } | null>(null);
 
   // Initialize and verify auth on mount
   useEffect(() => {
@@ -57,6 +62,40 @@ function App() {
     }
   }, [isHydrated]);
 
+  // Check for active game after auth verified
+  useEffect(() => {
+    if (!isAuthenticated || !isVerified || activeGameChecked) return;
+    
+    const checkActiveGame = async () => {
+      try {
+        const res = await gamesApi.active();
+        if (res.data) {
+          setActiveGame(res.data);
+          setShowReturnBanner(true);
+        }
+      } catch (e) {
+        // Ignore errors
+      } finally {
+        setActiveGameChecked(true);
+      }
+    };
+    
+    checkActiveGame();
+  }, [isAuthenticated, isVerified, activeGameChecked]);
+
+  const handleReturnToGame = () => {
+    if (activeGame) {
+      const path = activeGame.status === 'in_progress' 
+        ? `/game/${activeGame.id}` 
+        : `/game/${activeGame.id}/waiting`;
+      window.location.href = path;
+    }
+  };
+
+  const handleDismissBanner = () => {
+    setShowReturnBanner(false);
+  };
+
   return (
     <BrowserRouter>
       <Routes>
@@ -67,7 +106,14 @@ function App() {
           <PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>
         } />
         <Route element={
-          <ProtectedRoute><Layout /></ProtectedRoute>
+          <ProtectedRoute>
+            <Layout 
+              showReturnBanner={showReturnBanner} 
+              activeGame={activeGame}
+              onReturnToGame={handleReturnToGame}
+              onDismissBanner={handleDismissBanner}
+            />
+          </ProtectedRoute>
         }>
           <Route path="/lobby" element={<LobbyPage />} />
           <Route path="/game/:gameId/waiting" element={<WaitingRoom />} />

@@ -2,6 +2,7 @@
 from typing import Dict, Set
 from fastapi import WebSocket
 import json
+import time
 
 
 class ConnectionManager:
@@ -12,11 +13,16 @@ class ConnectionManager:
         self.user_games: Dict[int, Set[int]] = {}
         # lobby connections
         self.lobby_connections: Set[WebSocket] = set()
+        # Track last activity per connection for heartbeat timeout
+        self.last_activity: Dict[WebSocket, float] = {}
 
     async def connect(self, websocket: WebSocket, game_id: int, user_id: int):
         # accept() is already done in the route (main.py)
         self.game_connections.setdefault(game_id, {})[user_id] = websocket
         self.user_games.setdefault(user_id, set()).add(game_id)
+        self.last_activity[websocket] = time.time()
+        # Broadcast presence change
+        await self.broadcast_state_changed(game_id)
 
     def disconnect(self, game_id: int, user_id: int, websocket: WebSocket | None = None):
         conns = self.game_connections.get(game_id)
@@ -35,6 +41,14 @@ class ConnectionManager:
             games.discard(game_id)
             if not games:
                 self.user_games.pop(user_id, None)
+
+        # Clean up activity tracking
+        if websocket and websocket in self.last_activity:
+            del self.last_activity[websocket]
+
+        # Broadcast presence change
+        import asyncio
+        asyncio.create_task(self.broadcast_state_changed(game_id))
 
     async def _send(self, game_id: int, user_id: int, ws: WebSocket, message: str) -> bool:
         try:
@@ -89,6 +103,38 @@ class ConnectionManager:
         message = json.dumps({"type": "game_event", "event": event, "payload": data})
         for user_id, ws in list(conns.items()):
             await self._send(game_id, user_id, ws, message)
+
+    def is_connected(self, game_id: int, user_id: int) -> bool:
+        """Check if a user is currently connected to a game"""
+        conns = self.game_connections.get(game_id)
+        if not conns:
+            return False
+        return user_id in conns
+
+    def get_connected_players(self, game_id: int) -> Set[int]:
+        """Get set of connected user_ids for a game"""
+        conns = self.game_connections.get(game_id)
+        if not conns:
+            return set()
+        return set(conns.keys())
+
+    def update_activity(self, websocket: WebSocket):
+        """Update last activity timestamp for heartbeat tracking"""
+        self.last_activity[websocket] = time.time()
+
+    def check_heartbeat_timeouts(self, timeout_seconds: int) -> list[tuple[int, int, WebSocket]]:
+        """Check for connections that have timed out. Returns list of (game_id, user_id, websocket)"""
+        now = time.time()
+        timed_out = []
+        for ws, last_time in list(self.last_activity.items()):
+            if now - last_time > timeout_seconds:
+                # Find which game/user this websocket belongs to
+                for game_id, conns in self.game_connections.items():
+                    for user_id, conn_ws in conns.items():
+                        if conn_ws is ws:
+                            timed_out.append((game_id, user_id, ws))
+                            break
+        return timed_out
 
 
 manager = ConnectionManager()

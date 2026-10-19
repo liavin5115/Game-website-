@@ -2,7 +2,14 @@
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 
-export function Layout() {
+interface LayoutProps {
+  showReturnBanner?: boolean;
+  activeGame?: { id: number; status: string } | null;
+  onReturnToGame?: () => void;
+  onDismissBanner?: () => void;
+}
+
+export function Layout({ showReturnBanner = false, activeGame = null, onReturnToGame, onDismissBanner }: LayoutProps) {
   const { user, isAuthenticated, logout } = useAuthStore();
 
   const navLinks = [
@@ -72,6 +79,32 @@ export function Layout() {
           </div>
         </div>
       </header>
+
+      {showReturnBanner && activeGame && (
+        <div className="bg-blue-50 dark:bg-blue-900/30 border-b border-blue-200 dark:border-blue-800 px-4 py-3">
+          <div className="max-w-7xl mx-auto flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-blue-700 dark:text-blue-300 font-medium">
+                You have an active {activeGame.status === 'in_progress' ? 'game' : 'waiting room'}!
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={onReturnToGame}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg"
+              >
+                Return to Game
+              </button>
+              <button
+                onClick={onDismissBanner}
+                className="px-4 py-2 text-sm font-medium text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30 rounded-lg"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <Outlet />

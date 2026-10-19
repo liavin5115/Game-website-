@@ -3,12 +3,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 
 from database import get_db
 from auth import get_current_user, get_current_user_optional
-from models import User, Game, GameStatus, GameType
+from models import User, Game, GameStatus, GameType, GameSession
 from services.game_manager import GameManager
 from games import get_game_metadata
+from websocket.manager import manager
 
 router = APIRouter(prefix="/games", tags=["games"])
 
@@ -146,6 +148,21 @@ def get_game(game_id: int, current_user: User = Depends(get_current_user_optiona
     return game_to_response(game, user_id, db)
 
 
+@router.get("/active/me", response_model=Optional[GameResponse])
+def get_active_game(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Return the in_progress or waiting game the current user is in, or null."""
+    manager = GameManager(db)
+    # Find games where user is a participant and game is not finished/cancelled
+    game = db.query(Game).join(GameSession).filter(
+        GameSession.user_id == current_user.id,
+        Game.status.in_([GameStatus.WAITING, GameStatus.IN_PROGRESS])
+    ).order_by(Game.created_at.desc()).first()
+    
+    if not game:
+        return None
+    return game_to_response(game, current_user.id, db)
+
+
 @router.get("/my/history", response_model=list[GameListResponse])
 def my_games(status: Optional[str] = None, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     manager = GameManager(db)
@@ -197,6 +214,9 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     players_state = state_dict.get("players", [])
     player_state_map = {p["id"]: p for p in players_state}
 
+    # Get connected players from manager
+    connected_players = manager.get_connected_players(game.id)
+
     players = [
         {
             "id": s.user_id,
@@ -206,6 +226,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
             "status": s.result or "playing" if game.status.value == "in_progress" else "waiting",
             "auto_stood": player_state_map.get(s.user_id, {}).get("auto_stood", False),
             "away": player_state_map.get(s.user_id, {}).get("status") == "away",
+            "connected": s.user_id in connected_players,
         }
         for s in sessions if s.user_id in user_map
     ]

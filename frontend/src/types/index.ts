@@ -68,6 +68,7 @@ export interface PlayerState {
   payout?: number;
   auto_stood?: boolean;
   away?: boolean;
+  connected?: boolean;
 }
 
 export interface LobbyPlayer {
@@ -78,6 +79,7 @@ export interface LobbyPlayer {
   status: string;
   auto_stood?: boolean;
   away?: boolean;
+  connected?: boolean;
 }
 
 export interface LobbyGame {

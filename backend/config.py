@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     TURN_SECONDS: int = 30
     TURN_TIMEOUT_MAX_STRIKES: int = 2
 
+    # Reconnect / Presence
+    ABANDON_SECONDS: int = 120
+    WAITING_IDLE_MINUTES: int = 15
+    HEARTBEAT_INTERVAL_SECONDS: int = 20
+    HEARTBEAT_TIMEOUT_SECONDS: int = 60
+
     # CORS
     CORS_ORIGINS: list[str] = ["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"]
 

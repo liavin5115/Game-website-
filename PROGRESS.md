@@ -9,17 +9,32 @@
   - Missing: host_id, min_players, max_players fields in response
 - [TODO] Join concurrency safety (SQLite doesn't support with_for_update)
 - [DONE] Valid actions logic for double (chips >= bet check at blackjack.py:76)
+- [DONE] Reconnect & Presence (Heartbeat, Presence, Abandoned rounds, Idle waiting rooms)
+  - Heartbeat: client ping 20s, server pong, close after 60s no activity
+  - Presence: manager tracks connected players per game, broadcasts state_changed on connect/disconnect
+  - Game response includes per-player connected: bool (from manager)
+  - Disconnect does NOT pause game - timer runs, auto-stand on timeout, money/seat untouched
+  - Abandoned rounds: all players disconnected > ABANDON_SECONDS (120s default) -> auto-stand all, play dealer, settle once
+  - Idle waiting rooms: no connected players for WAITING_IDLE_MINUTES (15 min default) -> cancel with refund in ONE transaction
+  - GET /api/games/active/me returns in_progress or waiting game for current user
+  - GET /api/games/{id} for finished game works for its players with result/payout
 
 ## Frontend Types & API
 - [PARTIAL] src/types/game.ts - basic types exist in types/index.ts but not complete
-- [DONE] gamesApi (create, join, leave, start, get, action)
-- [TODO] useGameSocket hook implementation verification
+- [DONE] gamesApi (create, join, leave, start, get, action, active)
+- [DONE] useGameSocket hook - ping 20s, immediate refetch on open, refetch on online/visibilitychange, exponential backoff with jitter (cap 10s), polling fallback, stop on unmount/logout, no reconnect on 1000/4001/4003/4004
 
 ## Frontend Pages
 - [DONE] Lobby with Join/Open buttons and navigation
 - [DONE] Waiting room /game/:id/waiting (player list, host-only Start, Leave, auto-redirect)
 - [DONE] Game table renders correctly (BlackjackTable.tsx)
 - [DONE] Removed dev preview route (/dev/blackjack-preview not found)
+- [DONE] Reconnection banner: "Reconnecting..." while socket down, "Back online" after
+- [DONE] Disconnected badge on other players' panels when connected=false
+- [DONE] Action buttons disabled while disconnected
+- [DONE] Resume: on login/app load GET /api/games/active/me -> redirect to /game/{id} (in_progress) or /game/{id}/waiting (waiting) or show "Return to game" banner
+- [DONE] Page refresh mid-round rebuilds from server including timer
+- [DONE] Finished round while away shows finished panel with result/payout, balance refreshes
 
 ## Known Bugs to Fix
 1. [DONE] Double button missing - removed chip check from get_valid_actions() since game chips don't reflect user balance
@@ -87,5 +102,14 @@
   - [DONE] Frontend: "Auto-stand (timed out)" badge, "Away" badge
   - [DONE] Frontend: Buttons disabled at 0 and during request, send turn_seq, 409 -> silent refetch + toast
   - [DONE] Frontend: Reserve space for countdown (layout stability)
-- [TODO] Test backend startup (uvicorn in venv)
+- [DONE] Test backend startup (uvicorn in venv)
 - [DONE] Verify useGameSocket hook
+- [DONE] Task 4: Add Reconnect & Presence
+  - [DONE] Backend: Heartbeat ping/pong, 60s timeout, presence tracking
+  - [DONE] Backend: Abandoned round sweeper (ABANDON_SECONDS=120)
+  - [DONE] Backend: Idle waiting room cancellation with refund (WAITING_IDLE_MINUTES=15)
+  - [DONE] Backend: GET /api/games/active/me endpoint
+  - [DONE] Frontend: Ping every 20s, refetch on open/online/visible, backoff+jitter (cap 10s), polling fallback
+  - [DONE] Frontend: Connection banner, disconnected badges, disabled buttons
+  - [DONE] Frontend: Resume on login/load with active game redirect/banner
+  - [DONE] Frontend: tsc --noEmit and build pass

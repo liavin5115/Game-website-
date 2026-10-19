@@ -24,8 +24,8 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
   const [rematchLoading, setRematchLoading] = useState(false);
   const [clockOffset, setClockOffset] = useState(0); // server_time - Date.now()
   const [turnSeq, setTurnSeq] = useState(0);
+  const [remaining, setRemaining] = useState(0);
   const countdownIntervalRef = useRef<number>();
-  const countdownRef = useRef(0);
   const refetchTimeoutRef = useRef<number>();
 
   useGameSocket(gameId);
@@ -39,6 +39,8 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     refetchInterval: false,
   });
 
+  const { isConnected, showReconnectBanner } = useGameSocket(gameId);
+
   // Update clockOffset and turnSeq from server response
   useEffect(() => {
     if (game?.server_time) {
@@ -50,7 +52,7 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     }
   }, [game?.server_time, game?.turn_seq]);
 
-  // Countdown timer
+  // Countdown timer - runs for all players to see the current player's timer
   useEffect(() => {
     const turnDeadline = game?.turn_deadline;
     const isInProgress = game?.status === 'in_progress';
@@ -65,8 +67,8 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
       refetchTimeoutRef.current = undefined;
     }
 
-    if (!isInProgress || !turnDeadline || !myTurn) {
-      countdownRef.current = 0;
+    if (!isInProgress || !turnDeadline) {
+      setRemaining(0);
       return;
     }
 
@@ -74,12 +76,11 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
 
     const tick = () => {
       const now = Date.now() + clockOffset;
-      const remaining = Math.max(0, Math.ceil((deadlineMs - now) / 1000));
-      countdownRef.current = remaining;
+      const remainingSec = Math.max(0, Math.ceil((deadlineMs - now) / 1000));
+      setRemaining(remainingSec);
 
-      if (remaining <= 0) {
-        // At 0, wait for server push (state_changed -> refetch via useGameSocket)
-        // If nothing arrives within 2s, refetch once
+      // Only the active player needs the 2s fallback refetch
+      if (remainingSec <= 0 && myTurn) {
         if (!refetchTimeoutRef.current) {
           refetchTimeoutRef.current = window.setTimeout(() => {
             queryClient.invalidateQueries({ queryKey: ['game', gameId] });
@@ -176,7 +177,6 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
     return total;
   };
 
-  const remaining = countdownRef.current;
   const turnSeconds = game?.turn_seconds ?? 30;
   const progress = turnSeconds > 0 ? Math.max(0, Math.min(100, (remaining / turnSeconds) * 100)) : 0;
   const isLowTime = remaining <= 5 && remaining > 0;
@@ -224,6 +224,18 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
         )}
       </div>
 
+      {/* Reconnection Banner */}
+      {showReconnectBanner && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-orange-600 text-white rounded-lg shadow-lg text-sm font-medium animate-pulse">
+          Reconnecting...
+        </div>
+      )}
+      {!showReconnectBanner && !isConnected && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-green-600 text-white rounded-lg shadow-lg text-sm font-medium">
+          Back online
+        </div>
+      )}
+
       {/* Dealer Area */}
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border dark:border-gray-700">
         <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4 text-center">Dealer</h3>
@@ -252,6 +264,7 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
           const playerValue = getHandValue(player.cards);
           const isAutoStood = player.auto_stood === true;
           const isAway = player.away === true;
+          const isPlayerConnected = player.connected !== false;
 
           return (
             <div
@@ -269,6 +282,9 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
                   )}
                   {isAway && (
                     <span className="text-xs bg-gray-500 text-white px-2 py-0.5 rounded font-medium">Away</span>
+                  )}
+                  {!isPlayerConnected && !isCurrentPlayer && (
+                    <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded font-medium">Disconnected</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -311,11 +327,13 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
         })}
       </div>
 
-      {/* Countdown Timer for Active Player */}
-      {game.status === 'in_progress' && isMyTurn && (
+      {/* Countdown Timer for Current Player's Turn (visible to all) */}
+      {game.status === 'in_progress' && game.current_turn_user_id && (
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700" role="timer" aria-live="polite">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Time to act</span>
+            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
+              Time to act: <span className="font-bold text-yellow-600">{currentTurnPlayer?.username}</span>
+            </span>
             <span className={`text-sm font-mono font-bold ${isLowTime ? 'text-red-600' : 'text-gray-700 dark:text-gray-300'}`}>
               {remaining}s
             </span>
@@ -330,12 +348,12 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
               aria-valuemax={turnSeconds}
             />
           </div>
+          {isMyTurn && (
+            <p className="mt-2 text-xs text-gray-500 dark:text-gray-400 text-center">
+              Your turn - choose an action below
+            </p>
+          )}
         </div>
-      )}
-
-      {/* Countdown placeholder for layout stability when not my turn */}
-      {game.status === 'in_progress' && !isMyTurn && (
-        <div className="h-14" aria-hidden="true" />
       )}
 
       {/* Action Bar */}
@@ -349,7 +367,7 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
                     key={action}
                     variant={action === 'stand' ? 'secondary' : 'primary'}
                     onClick={() => handleAction(action)}
-                    disabled={loading || remaining <= 0}
+                    disabled={loading || remaining <= 0 || !isConnected}
                     className="min-w-[120px]"
                   >
                     {actionLabels[action] || action}

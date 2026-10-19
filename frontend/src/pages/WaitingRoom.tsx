@@ -18,7 +18,7 @@ export default function WaitingRoom() {
   const numericGameId = Number(gameId);
 
   // Enable WebSocket for this game
-  useGameSocket(numericGameId);
+  const { isConnected, showReconnectBanner } = useGameSocket(numericGameId);
 
   // Fetch game state
   const { data: game, isLoading } = useQuery({
@@ -117,6 +117,18 @@ export default function WaitingRoom() {
 
   return (
     <div className="max-w-2xl mx-auto py-8 px-4">
+      {/* Reconnection Banner */}
+      {showReconnectBanner && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-orange-600 text-white rounded-lg shadow-lg text-sm font-medium animate-pulse mb-4">
+          Reconnecting...
+        </div>
+      )}
+      {!showReconnectBanner && !isConnected && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 bg-green-600 text-white rounded-lg shadow-lg text-sm font-medium mb-4">
+          Back online
+        </div>
+      )}
+
       <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm border dark:border-gray-700 p-6">
         <div className="flex justify-between items-start mb-6">
           <div>
@@ -146,34 +158,42 @@ export default function WaitingRoom() {
 
         {/* Players list */}
         <div className="mb-6 space-y-2">
-          {game.players.map((player: any) => (
-            <div
-              key={player.id}
-              className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
-            >
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gold-500 rounded-full flex items-center justify-center text-white font-bold">
-                  {player.username[0].toUpperCase()}
+          {game.players.map((player: any) => {
+            const isPlayerConnected = player.connected !== false;
+            return (
+              <div
+                key={player.id}
+                className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-gold-500 rounded-full flex items-center justify-center text-white font-bold">
+                    {player.username[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-900 dark:text-white">
+                      {player.username}
+                      {player.id === game.host_id && (
+                        <span className="ml-2 px-2 py-0.5 text-xs bg-gold-500 text-white rounded">
+                          Host
+                        </span>
+                      )}
+                      {!isPlayerConnected && player.id !== myId && (
+                        <span className="ml-2 px-2 py-0.5 text-xs bg-red-500 text-white rounded">
+                          Disconnected
+                        </span>
+                      )}
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">
+                      Seat {player.seat}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="font-medium text-gray-900 dark:text-white">
-                    {player.username}
-                    {player.id === game.host_id && (
-                      <span className="ml-2 px-2 py-0.5 text-xs bg-gold-500 text-white rounded">
-                        Host
-                      </span>
-                    )}
-                  </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400">
-                    Seat {player.seat}
-                  </p>
-                </div>
+                {player.id === myId && (
+                  <span className="text-sm text-gold-600 dark:text-gold-400 font-medium">You</span>
+                )}
               </div>
-              {player.id === myId && (
-                <span className="text-sm text-gold-600 dark:text-gold-400 font-medium">You</span>
-              )}
-            </div>
-          ))}
+            );
+          })}
         </div>
 
         {/* Actions */}
@@ -182,6 +202,7 @@ export default function WaitingRoom() {
             variant="secondary"
             onClick={handleLeave}
             loading={leaving}
+            disabled={!isConnected}
             className="flex-1"
           >
             Leave
@@ -191,9 +212,9 @@ export default function WaitingRoom() {
             <Button
               onClick={handleStart}
               loading={starting}
-              disabled={!canStart}
+              disabled={!canStart || !isConnected}
               className="flex-1"
-              title={!canStart ? `Need at least ${game.min_players} players` : undefined}
+              title={!canStart ? `Need at least ${game.min_players} players` : !isConnected ? 'Reconnecting...' : undefined}
             >
               {canStart ? 'Start Game' : `Need ${game.min_players - game.players.length} more`}
             </Button>

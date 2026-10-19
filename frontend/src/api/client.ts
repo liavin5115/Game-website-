@@ -70,6 +70,7 @@ export const gamesApi = {
   get: (gameId: number) => api.get(`/games/${gameId}`),
   history: (params?: { status?: string }) =>
     api.get('/games/my/history', { params }),
+  active: () => api.get('/games/active/me'),
 };
 
 // Lobby endpoints
