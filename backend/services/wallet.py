@@ -99,17 +99,40 @@ class WalletService:
         )
 
     def get_transaction_summary(self, user_id: int) -> dict:
-        """Get summary stats for dashboard"""
-        txs = self.db.query(Transaction).filter(Transaction.user_id == user_id).all()
-        deposits = sum(t.amount for t in txs if t.amount > 0 and t.type == TransactionType.DEPOSIT)
-        withdrawals = sum(-t.amount for t in txs if t.amount < 0 and t.type == TransactionType.WITHDRAWAL)
-        game_wins = sum(t.amount for t in txs if t.amount > 0 and t.type == TransactionType.GAME_WIN)
-        game_losses = sum(-t.amount for t in txs if t.amount < 0 and t.type == TransactionType.GAME_LOSS)
+        """Get summary stats for finished games using SQL aggregates"""
+        from sqlalchemy import func, case
+        from models import Game, GameSession, GameStatus
+
+        row = self.db.query(
+            func.count(GameSession.id).label("games_played"),
+            func.sum(case((GameSession.payout > GameSession.buy_in, 1), else_=0)).label("wins"),
+            func.sum(case((GameSession.payout < GameSession.buy_in, 1), else_=0)).label("losses"),
+            func.sum(case((GameSession.payout == GameSession.buy_in, 1), else_=0)).label("pushes"),
+            func.coalesce(func.sum(case((GameSession.payout > GameSession.buy_in, GameSession.payout - GameSession.buy_in), else_=0)), 0).label("total_won"),
+            func.coalesce(func.sum(case((GameSession.payout < GameSession.buy_in, GameSession.buy_in - GameSession.payout), else_=0)), 0).label("total_lost"),
+            func.coalesce(func.max(case((GameSession.payout > GameSession.buy_in, GameSession.payout - GameSession.buy_in), else_=0)), 0).label("biggest_win"),
+        ).join(Game, GameSession.game_id == Game.id)\
+         .filter(GameSession.user_id == user_id, Game.status == GameStatus.FINISHED)\
+         .first()
+
+        games_played = int(row.games_played or 0) if row else 0
+        wins = int(row.wins or 0) if row else 0
+        losses = int(row.losses or 0) if row else 0
+        pushes = int(row.pushes or 0) if row else 0
+        total_won = int(row.total_won or 0) if row else 0
+        total_lost = int(row.total_lost or 0) if row else 0
+        biggest_win = int(row.biggest_win or 0) if row else 0
+        net = total_won - total_lost
+        win_rate = int(round((wins / games_played) * 100)) if games_played > 0 else 0
 
         return {
-            "total_deposited": deposits,
-            "total_withdrawn": withdrawals,
-            "total_won": game_wins,
-            "total_lost": game_losses,
-            "net": game_wins - game_losses + deposits - withdrawals,
+            "games_played": games_played,
+            "wins": wins,
+            "losses": losses,
+            "pushes": pushes,
+            "win_rate": win_rate,
+            "total_won": total_won,
+            "total_lost": total_lost,
+            "net": net,
+            "biggest_win": biggest_win,
         }

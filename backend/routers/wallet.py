@@ -35,11 +35,15 @@ class DailyBonusResponse(BaseModel):
 
 
 class SummaryResponse(BaseModel):
-    total_deposited: int
-    total_withdrawn: int
+    games_played: int
+    wins: int
+    losses: int
+    pushes: int
+    win_rate: int
     total_won: int
     total_lost: int
     net: int
+    biggest_win: int
 
 
 @router.get("/balance", response_model=BalanceResponse)

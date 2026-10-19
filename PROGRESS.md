@@ -40,6 +40,29 @@
 - [DONE] Added UI rules indicator in Blackjack table ("Dealer hits soft 17 • Blackjack pays 3:2")
 - [DONE] Fixed auth redirect loop between /lobby and /login (verified auth state on load, single logout on 401, preserved /auth/login error handling, unauthenticated polling guards)
 - [DONE] Configured stable SECRET_KEY loading from .env with explicit 401 error reasons (Token expired, Invalid token, User not found)
+- [DONE] Fixed Wallet Stats: SQL aggregates based on finished game sessions (games_played, wins, losses, pushes, win_rate, total_won, total_lost, net, biggest_win), excluded non-game transactions and left games
+- [DONE] Fixed double down buy_in recording bug (was 4x bet, now 2x) in game_manager.py:197
+- [DONE] Wallet page refetches stats after game finishes via CustomEvent
+- [DONE] Added "Play Again" (rematch) feature for Blackjack:
+  - POST /api/games/rematch {game_id} - idempotent, race-safe with row lock
+  - Stores next_game_id in finished game's state metadata (no schema change)
+  - Only players from original game can rematch; checks balance >= buy_in
+  - If next_game_id exists and game is WAITING with room, joins it; else creates new
+  - Concurrent calls return same game; double-click safe
+  - Returns 409 if next game already started/full/cancelled
+  - Frontend: "Play Again (X pts)" button in finished state, shows "Join Rematch" if next_game_id exists, disabled with reason when balance < buy_in
+  - Solo play works (min_players=1); wallet stats refetch after rematch round
+- [DONE] Fixed SQLite connection pool exhaustion (QueuePool timeout) by:
+  - Using NullPool in database.py (no pooling, new connection per request)
+  - WebSocket endpoints now create/close their own DB sessions instead of using Depends(get_db) which held connections for connection lifetime
+
+## Discrepancy Report (Old Data)
+- liavin (id=3): 6/14 finished games have TX vs GameSession net mismatch
+  - Game 21: double down buy_in bug (fixed going forward)
+  - Games 27,29,31,32,33: old 1x payout bug + missing buy-in ref_id in TX
+- rafa (id=4): 2/4 finished games mismatch (Games 33,34) - missing buy-in ref_id in TX
+- GameSession data is correct per requirements (corrected payouts). Transactions are incomplete (missing buy-in ref_ids, old 1x payout).
+- Awaiting decision: leave / backfill / reset stats for mismatched games
 
 ## Next Steps
 - [DONE] Fix bug #1: Double button
@@ -47,5 +70,7 @@
 - [DONE] Fix bug #3: Finished state verification
 - [DONE] Fix blackjack win payout calculation (was paying net profit instead of full payout)
 - [DONE] Fix auth 401 redirect loop
+- [DONE] Task 1: Fix wallet stats (double down bug fixed, refetch on game finish, discrepancies reported)
+- [DONE] Task 2: Add "Play again" (rematch) to blackjack
 - [TODO] Test backend startup (uvicorn in venv)
 - [DONE] Verify useGameSocket hook

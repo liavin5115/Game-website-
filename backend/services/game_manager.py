@@ -35,14 +35,6 @@ class GameManager:
         if not self.wallet.can_afford(creator_id, buy_in):
             raise ValueError("Insufficient points for buy-in")
 
-        # Deduct buy-in from creator
-        self.wallet.deduct_points(
-            creator_id,
-            buy_in,
-            TransactionType.GAME_BUYIN,
-            f"Buy-in for {metadata['name']}",
-        )
-
         # Create game
         game = Game(
             game_type=GameType(game_type),
@@ -53,6 +45,16 @@ class GameManager:
         )
         self.db.add(game)
         self.db.flush()
+
+        # Deduct buy-in from creator with game reference
+        self.wallet.deduct_points(
+            creator_id,
+            buy_in,
+            TransactionType.GAME_BUYIN,
+            f"Buy-in for {metadata['name']}",
+            game.id,
+            commit=False
+        )
 
         # Create session for creator
         session = GameSession(
@@ -98,12 +100,14 @@ class GameManager:
         if not self.wallet.can_afford(user_id, game.buy_in):
             raise ValueError("Insufficient points for buy-in")
 
-        # Deduct buy-in
+        # Deduct buy-in with game reference
         self.wallet.deduct_points(
             user_id,
             game.buy_in,
             TransactionType.GAME_BUYIN,
             f"Buy-in for {metadata['name']}",
+            game.id,
+            commit=False
         )
 
         # Add player to game - unique constraint prevents duplicate joins
@@ -186,6 +190,11 @@ class GameManager:
                         game_id,
                         commit=False
                     )
+                    session = self.db.query(GameSession).filter(
+                        and_(GameSession.game_id == game.id, GameSession.user_id == user_id)
+                    ).first()
+                    if session:
+                        session.buy_in = player_state["bet"]
 
             # Apply action
             action = GameAction(type=action_type, amount=amount)
@@ -434,3 +443,91 @@ class GameManager:
         await manager.broadcast_lobby_update({"type": "lobby_changed", "game_id": game_id})
 
         return game
+
+    async def rematch_game(self, game_id: int, user_id: int) -> Game:
+        """Create or join a rematch of a finished game. Idempotent and race-safe."""
+        import json
+        from sqlalchemy.exc import OperationalError
+
+        # Lock the finished game row for update (race-safe)
+        game = self.db.query(Game).filter(Game.id == game_id).with_for_update().first()
+        if not game:
+            raise ValueError("Game not found")
+
+        if game.status != GameStatus.FINISHED:
+            raise ValueError("Game is not finished")
+
+        # Verify user was a player in this game
+        session = self.db.query(GameSession).filter(
+            GameSession.game_id == game_id,
+            GameSession.user_id == user_id
+        ).first()
+        if not session:
+            raise ValueError("Not a player in this game")
+
+        # Parse state to check for existing next_game_id
+        state_dict = {}
+        if game.state:
+            if isinstance(game.state, dict):
+                state_dict = game.state
+            elif isinstance(game.state, str):
+                try:
+                    state_dict = json.loads(game.state)
+                except:
+                    state_dict = {}
+
+        metadata = state_dict.get("metadata", {})
+        next_game_id = metadata.get("next_game_id")
+
+        # If next_game_id exists, try to join that game
+        if next_game_id:
+            next_game = self.db.query(Game).filter(Game.id == next_game_id).first()
+            if next_game:
+                # Check if user is already in the next game
+                existing_session = self.db.query(GameSession).filter(
+                    GameSession.game_id == next_game_id,
+                    GameSession.user_id == user_id
+                ).first()
+                if existing_session:
+                    # Already in the rematch game, return it
+                    self.db.refresh(next_game)
+                    return next_game
+
+                # Check if next game is still joinable
+                if next_game.status == GameStatus.WAITING:
+                    next_metadata = get_game_metadata(next_game.game_type.value)
+                    current_players = self.db.query(GameSession).filter(
+                        GameSession.game_id == next_game_id
+                    ).count()
+                    if current_players < next_metadata["max_players"]:
+                        # Check buy-in
+                        if not self.wallet.can_afford(user_id, next_game.buy_in):
+                            raise ValueError("Insufficient points for buy-in")
+
+                        # Join the existing rematch game
+                        await self.join_game(next_game_id, user_id)
+                        self.db.refresh(next_game)
+                        return next_game
+
+            # Next game not joinable (started, full, cancelled) - return 409 error
+            raise ValueError("Rematch game already started or full. Please create a new game.")
+
+        # Check buy-in before creating new game
+        if not self.wallet.can_afford(user_id, game.buy_in):
+            raise ValueError("Insufficient points for buy-in")
+
+        # Create new rematch game with same type and buy-in
+        # Make the requester the host
+        new_game = await self.create_game(user_id, game.game_type.value, game.buy_in)
+
+        # Store next_game_id in the finished game's state metadata
+        if "metadata" not in state_dict:
+            state_dict["metadata"] = {}
+        state_dict["metadata"]["next_game_id"] = new_game.id
+        game.state = json.dumps(state_dict)
+        self.db.commit()
+
+        # Broadcast lobby update for new game
+        await manager.broadcast_lobby_update({"type": "lobby_changed", "game_id": new_game.id})
+
+        return new_game

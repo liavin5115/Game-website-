@@ -17,9 +17,10 @@ const actionLabels: Record<string, string> = {
 export function BlackjackTable({ gameId }: { gameId: number }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const { user } = useAuthStore();
+  const { user, updatePoints } = useAuthStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [rematchLoading, setRematchLoading] = useState(false);
 
   useGameSocket(gameId);
 
@@ -42,8 +43,38 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
       authApi.me().then(res => {
         useAuthStore.getState().setAuth(res.data, localStorage.getItem('access_token') || '');
       });
+      // Trigger wallet stats refetch
+      window.dispatchEvent(new CustomEvent('wallet:refetch'));
     }
   }, [game?.status]);
+
+  const handleRematch = async () => {
+    if (rematchLoading || !game) return;
+    setRematchLoading(true);
+    setError('');
+
+    try {
+      const res = await gamesApi.rematch({ game_id: gameId });
+      const newGame = res.data;
+      
+      // Refresh balance
+      const meRes = await authApi.me();
+      updatePoints(meRes.data.points);
+      
+      // Navigate to waiting room for the new game
+      navigate(`/game/${newGame.id}/waiting`);
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || 'Rematch failed';
+      if (err.response?.status === 409) {
+        setError(detail);
+        // For 409, show message but don't navigate - user can click Back to Lobby
+      } else {
+        setError(detail);
+      }
+    } finally {
+      setRematchLoading(false);
+    }
+  };
 
   const handleAction = async (actionType: string) => {
     if (loading) return;
@@ -255,8 +286,28 @@ export function BlackjackTable({ gameId }: { gameId: number }) {
             })}
           </div>
 
-          <div className="text-center">
-            <Button onClick={() => navigate('/lobby')} size="lg">Back to Lobby</Button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Button 
+              onClick={handleRematch} 
+              loading={rematchLoading} 
+              disabled={rematchLoading || (user?.points ?? 0) < game.buy_in}
+              className="min-w-[180px]"
+            >
+              {game.next_game_id ? 'Join Rematch' : `Play Again (${game.buy_in} pts)`}
+            </Button>
+            {(user?.points ?? 0) < game.buy_in && !rematchLoading && (
+              <span className="text-sm text-red-600 dark:text-red-400 text-center sm:text-left">
+                Insufficient balance ({user?.points ?? 0} pts, need {game.buy_in} pts)
+              </span>
+            )}
+            {error && (
+              <div className="w-full text-center text-red-600 dark:text-red-400 text-sm mt-2">
+                {error}
+              </div>
+            )}
+            <Button onClick={() => navigate('/lobby')} size="lg" variant="secondary">
+              Back to Lobby
+            </Button>
           </div>
         </div>
       )}

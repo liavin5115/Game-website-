@@ -43,69 +43,81 @@ def health():
 
 # WebSocket endpoint for real-time game updates
 @app.websocket("/ws/game/{game_id}")
-async def websocket_game(websocket: WebSocket, game_id: int, token: str, db: Session = Depends(get_db)):
+async def websocket_game(websocket: WebSocket, game_id: int, token: str):
     # Accept first, then authenticate
     await websocket.accept()
 
-    # Authenticate via token query param
-    payload = decode_token(token)
-    if not payload:
-        await websocket.close(code=4001)
-        return
-
-    user_id = int(payload.get("sub", 0))
-    user = db.query(User).filter(User.id == user_id).first()
-    if not user:
-        await websocket.close(code=4001)
-        return
-
-    # Verify user is in this game
-    game_manager = GameManager(db)
-    game = game_manager.get_game(game_id)
-    if not game:
-        await websocket.close(code=4004)
-        return
-
-    # Check if user is a participant
-    from models import GameSession
-    session = db.query(GameSession).filter(
-        GameSession.game_id == game_id,
-        GameSession.user_id == user_id
-    ).first()
-    if not session:
-        await websocket.close(code=4003)
-        return
-
-    await manager.connect(websocket, game_id, user_id)
-
+    # Create a new DB session for this WebSocket connection
+    from database import SessionLocal
+    db = SessionLocal()
+    
     try:
-        # Send initial state
-        game = game_manager.get_game(game_id, user_id)
-        if game:
-            import json
-            state = json.loads(game.state) if isinstance(game.state, str) else game.state
-            await websocket.send_text(json.dumps({"type": "game_state", "payload": state}))
+        # Authenticate via token query param
+        payload = decode_token(token)
+        if not payload:
+            await websocket.close(code=4001)
+            return
 
-        # Listen for messages (client can send actions via WS too)
-        while True:
-            data = await websocket.receive_text()
-            # Handle incoming WS messages if needed
+        user_id = int(payload.get("sub", 0))
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            await websocket.close(code=4001)
+            return
+
+        # Verify user is in this game
+        game_manager = GameManager(db)
+        game = game_manager.get_game(game_id)
+        if not game:
+            await websocket.close(code=4004)
+            return
+
+        # Check if user is a participant
+        from models import GameSession
+        session = db.query(GameSession).filter(
+            GameSession.game_id == game_id,
+            GameSession.user_id == user_id
+        ).first()
+        if not session:
+            await websocket.close(code=4003)
+            return
+
+        await manager.connect(websocket, game_id, user_id)
+
+        try:
+            # Send initial state
+            game = game_manager.get_game(game_id, user_id)
+            if game:
+                import json
+                state = json.loads(game.state) if isinstance(game.state, str) else game.state
+                await websocket.send_text(json.dumps({"type": "game_state", "payload": state}))
+
+            # Listen for messages (client can send actions via WS too)
+            while True:
+                data = await websocket.receive_text()
+                # Handle incoming WS messages if needed
+                pass
+
+        except WebSocketDisconnect:
             pass
-
-    except WebSocketDisconnect:
-        pass
+        finally:
+            manager.disconnect(game_id, user_id)
     finally:
-        manager.disconnect(game_id, user_id)
+        db.close()
 
 
 # WebSocket for lobby updates
 @app.websocket("/ws/lobby")
-async def websocket_lobby(websocket: WebSocket, token: str | None = None, db: Session = Depends(get_db)):
+async def websocket_lobby(websocket: WebSocket, token: str | None = None):
     user_id = None
     if token:
-        payload = decode_token(token)
-        if payload:
-            user_id = int(payload.get("sub", 0))
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            payload = decode_token(token)
+            if payload:
+                user_id = int(payload.get("sub", 0))
+        finally:
+            db.close()
 
     await websocket.accept()
     manager.lobby_connections.add(websocket)

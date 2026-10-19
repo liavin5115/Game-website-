@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
 
     # Database
-    DATABASE_URL: str = "sqlite:///./game_platform.db"
+    DATABASE_URL: str = f"sqlite:///{(BASE_DIR / 'game_platform.db').as_posix()}"
 
     # Auth
     SECRET_KEY: str = "your-super-secret-key-change-in-production"

@@ -37,6 +37,7 @@ export interface Game {
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
+  next_game_id?: number;
 }
 
 export interface GameState {
@@ -95,11 +96,15 @@ export interface Transaction {
 }
 
 export interface WalletSummary {
-  total_deposited: number;
-  total_withdrawn: number;
+  games_played: number;
+  wins: number;
+  losses: number;
+  pushes: number;
+  win_rate: number;
   total_won: number;
   total_lost: number;
   net: number;
+  biggest_win: number;
 }
 
 export interface DailyBonusResponse {

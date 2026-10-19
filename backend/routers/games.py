@@ -36,6 +36,10 @@ class StartGameRequest(BaseModel):
     game_id: int
 
 
+class RematchRequest(BaseModel):
+    game_id: int
+
+
 class GameResponse(BaseModel):
     id: int
     game_type: str
@@ -53,6 +57,7 @@ class GameResponse(BaseModel):
     created_at: str
     started_at: Optional[str]
     finished_at: Optional[str]
+    next_game_id: Optional[int] = None
 
 
 class GameListResponse(BaseModel):
@@ -144,6 +149,16 @@ def my_games(status: Optional[str] = None, current_user: User = Depends(get_curr
     return [game_to_list_response(g, db) for g in games]
 
 
+@router.post("/rematch", response_model=GameResponse)
+async def rematch_game(request: RematchRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    manager = GameManager(db)
+    try:
+        game = await manager.rematch_game(request.game_id, current_user.id)
+    except ValueError as e:
+        raise HTTPException(status_code=400 if "not finished" in str(e) or "balance" in str(e).lower() else 403 if "not a player" in str(e) else 409, detail=str(e))
+    return game_to_response(game, current_user.id, db)
+
+
 def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     import json
     from games import get_game_metadata, get_game_class
@@ -157,6 +172,11 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
                 state_dict = json.loads(game.state)
             except:
                 state_dict = {}
+
+    # Get next_game_id from finished game's metadata
+    next_game_id = None
+    if game.status.value == "finished" and state_dict:
+        next_game_id = state_dict.get("metadata", {}).get("next_game_id")
 
     # Get actual players from game_sessions
     from models import GameSession
@@ -215,6 +235,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
         "created_at": game.created_at.isoformat() if game.created_at else "",
         "started_at": game.started_at.isoformat() if game.started_at else None,
         "finished_at": game.finished_at.isoformat() if game.finished_at else None,
+        "next_game_id": next_game_id,
     }
 
 

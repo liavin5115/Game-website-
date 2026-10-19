@@ -1,8 +1,9 @@
 /** Transaction history component */
 import { useEffect, useState } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { walletApi } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
-import type { Transaction, WalletSummary } from '../../types';
+import type { Transaction } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
 
@@ -28,39 +29,45 @@ const typeColors: Record<string, string> = {
 
 export function TransactionHistory() {
   const { isAuthenticated } = useAuthStore();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [summary, setSummary] = useState<WalletSummary | null>(null);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [showModal, setShowModal] = useState(false);
   const [dailyBonus, setDailyBonus] = useState<{ claimed: boolean; amount: number; message: string } | null>(null);
 
+  const { data: transactions = [], isLoading: txLoading } = useQuery({
+    queryKey: ['wallet', 'transactions'],
+    queryFn: () => walletApi.transactions({ limit: 20 }).then(r => r.data),
+    enabled: isAuthenticated,
+  });
+
+  const { data: summary, isLoading: sumLoading } = useQuery({
+    queryKey: ['wallet', 'summary'],
+    queryFn: () => walletApi.summary().then(r => r.data),
+    enabled: isAuthenticated,
+  });
+
+  const loading = txLoading || sumLoading;
+
+  // Expose refetch for external triggers
   useEffect(() => {
-    if (!isAuthenticated) return;
-    loadData();
+    if (isAuthenticated) {
+      window.dispatchEvent(new CustomEvent('wallet:refetch'));
+    }
   }, [isAuthenticated]);
 
-  const loadData = async () => {
-    setLoading(true);
-    try {
-      const [txRes, sumRes] = await Promise.all([
-        walletApi.transactions({ limit: 20 }),
-        walletApi.summary(),
-      ]);
-      setTransactions(txRes.data);
-      setSummary(sumRes.data);
-    } catch (err) {
-      console.error('Failed to load wallet data:', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    const handleRefetch = () => {
+      queryClient.invalidateQueries({ queryKey: ['wallet'] });
+    };
+    window.addEventListener('wallet:refetch', handleRefetch);
+    return () => window.removeEventListener('wallet:refetch', handleRefetch);
+  }, [queryClient]);
 
   const claimDailyBonus = async () => {
     try {
       const res = await walletApi.dailyBonus();
       setDailyBonus(res.data);
       setShowModal(true);
-      loadData();
+      queryClient.invalidateQueries({ queryKey: ['wallet'] });
     } catch (err) {
       console.error('Failed to claim daily bonus:', err);
     }
@@ -78,31 +85,55 @@ export function TransactionHistory() {
     <div className="space-y-6">
       {/* Balance & Summary */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700 lg:col-span-2">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Summary</h3>
-          <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700 lg:col-span-3">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Game Stats</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Games Played</p>
+              <p className="text-2xl font-bold text-gray-900 dark:text-white">
+                {summary?.games_played ?? 0}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Wins</p>
+              <p className="text-2xl font-bold text-green-600 dark:text-green-400">
+                {summary?.wins ?? 0}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Losses</p>
+              <p className="text-2xl font-bold text-red-600 dark:text-red-400">
+                {summary?.losses ?? 0}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Pushes</p>
+              <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">
+                {summary?.pushes ?? 0}
+              </p>
+            </div>
+            <div>
+              <p className="text-sm text-gray-500 dark:text-gray-400">Win Rate</p>
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
+                {summary?.win_rate ?? 0}%
+              </p>
+            </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Total Won</p>
               <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                {summary?.total_won?.toLocaleString() || 0}
+                +{summary?.total_won?.toLocaleString() ?? 0}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Total Lost</p>
               <p className="text-2xl font-bold text-red-600 dark:text-red-400">
-                {summary?.total_lost?.toLocaleString() || 0}
+                -{summary?.total_lost?.toLocaleString() ?? 0}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Net</p>
-              <p className="text-2xl font-bold text-gray-900 dark:text-white">
-                {summary?.net?.toLocaleString() || 0}
-              </p>
-            </div>
-            <div>
-              <p className="text-sm text-gray-500 dark:text-gray-400">Games Played</p>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">
-                {((summary?.total_won || 0) + (summary?.total_lost || 0)) > 0 ? '—' : '0'}
+              <p className={`text-2xl font-bold ${(summary?.net ?? 0) > 0 ? 'text-green-600 dark:text-green-400' : (summary?.net ?? 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
+                {(summary?.net ?? 0) > 0 ? '+' : ''}{summary?.net?.toLocaleString() ?? 0}
               </p>
             </div>
           </div>
@@ -130,7 +161,7 @@ export function TransactionHistory() {
           <div className="p-8 text-center text-gray-500 dark:text-gray-400">No transactions yet</div>
         ) : (
           <div className="divide-y divide-gray-200 dark:divide-gray-700">
-            {transactions.map((tx) => (
+            {transactions.map((tx: Transaction) => (
               <div key={tx.id} className="px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50">
                 <div className="flex items-center gap-3">
                   <div

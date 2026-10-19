@@ -66,6 +66,7 @@ export const gamesApi = {
   start: (data: { game_id: number }) => api.post('/games/start', data),
   action: (data: { game_id: number; action: string; amount?: number }) =>
     api.post('/games/action', data),
+  rematch: (data: { game_id: number }) => api.post('/games/rematch', data),
   get: (gameId: number) => api.get(`/games/${gameId}`),
   history: (params?: { status?: string }) =>
     api.get('/games/my/history', { params }),
