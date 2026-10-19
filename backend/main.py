@@ -85,6 +85,21 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title=settings.APP_NAME, debug=settings.DEBUG, lifespan=lifespan)
 
+# CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Routers
+app.include_router(auth_router.router, prefix="/api")
+app.include_router(wallet_router.router, prefix="/api")
+app.include_router(games_router.router, prefix="/api")
+app.include_router(lobby_router.router, prefix="/api")
+
 
 @app.get("/health")
 def health():
