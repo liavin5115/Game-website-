@@ -401,3 +401,35 @@ Response (200): GameResponse with state visible to requesting player
 - [DONE] RESUME AND RECONNECT: Refresh mid-hand rebuilds table/timer/cards from server; active-game banner/redirect works for poker; finished-while-away shows finished panel.
 - [DONE] RULES PANEL: Collapsible "Rules" panel (blinds buy_in//20 and half, no rake, leftover refunded, 30s/turn, timeout = check or fold).
 - [DONE] tsc --noEmit passes, build passes, no temporary logs or dev preview route.
+# #   P o k e r   F r o n t e n d   -   B u g   F i x :   F u l l - s c r e e n   f e l t   b a c k g r o u n d   ( D O N E )  
+  
+ # # #   R o o t   C a u s e  
+ -   m e   w a s   a   G a m e P l a y e r   ( f r o m   g a m e . p l a y e r s )   n o t   a   P l a y e r S t a t e   ( f r o m   g a m e . s t a t e . p l a y e r s ) ,   s o   m e . c h i p s   a n d   m e . c a r d s   w e r e   u n d e f i n e d  
+ -   R o o t   e l e m e n t   h a d   m i n - h - s c r e e n   c o v e r i n g   n a v b a r   a r e a  
+ -   N o   e r r o r   b o u n d a r y   t o   c a t c h   r e n d e r   c r a s h e s  
+ -   N o   v i s i b l e   l o a d i n g   s t a t e   w h e n   d a t a   w a s   m i s s i n g  
+  
+ # # #   F i x e s  
+ -   m e   n o w   r e s o l v e d   f r o m   g a m e S t a t e . p l a y e r s   ( P l a y e r S t a t e   w i t h   c h i p s / c a r d s )  
+ -   A d d e d   E r r o r B o u n d a r y   a r o u n d   P o k e r T a b l e   i n   G a m e . t s x  
+ -   R o o t   e l e m e n t   c h a n g e d   t o   m i n - h - [ c a l c ( 1 0 0 v h - 8 r e m ) ]   t o   n o t   c o v e r   n a v b a r  
+ -   A d d e d   v i s i b l e   l o a d i n g   s p i n n e r   a n d   e r r o r   s t a t e  
+ -   D e s k t o p   t a b l e   c o n t a i n e r :   a d d e d   m i n - h - [ 4 0 0 p x ]   t o   p r e v e n t   z e r o - h e i g h t   c o l l a p s e  
+ -   t s c   - - n o E m i t   p a s s e s ,   b u i l d   p a s s e s  
+ 
+## Poker Frontend - Bug Fix: Full-screen felt background (DONE)
+
+### Root Cause
+- me was a GamePlayer (from game.players) not a PlayerState (from game.state.players), so me.chips and me.cards were undefined
+- Root element had min-h-screen covering navbar area
+- No error boundary to catch render crashes
+- No visible loading state when data was missing
+
+### Fixes
+- me now resolved from gameState.players (PlayerState with chips/cards)
+- Added ErrorBoundary around PokerTable in Game.tsx
+- Root element changed to min-h-[calc(100vh-8rem)] to not cover navbar
+- Added visible loading spinner and error state
+- Desktop table container: added min-h-[400px] to prevent zero-height collapse
+- tsc --noEmit passes, build passes
+

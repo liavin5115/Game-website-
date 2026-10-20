@@ -792,7 +792,7 @@ export function PokerTableDisplay({
   const pot = gameState?.pot ?? 0;
 
   return (
-    <div className="relative min-h-screen bg-felt-500/10 dark:bg-felt-900/10 px-4 py-6">
+    <div className="relative min-h-[calc(100vh-8rem)] bg-felt-500/10 dark:bg-felt-900/10 px-4 py-6">
       <ConnectionBanner showReconnectBanner={showReconnectBanner} isConnected={isConnected} />
 
       {/* Rules panel trigger */}
@@ -811,7 +811,7 @@ export function PokerTableDisplay({
 
       {/* Desktop: Oval Table Layout */}
       <div className="hidden md:block relative">
-        <div className="max-w-6xl mx-auto aspect-[3/2] max-h-[70vh] relative">
+        <div className="max-w-6xl mx-auto aspect-[3/2] min-h-[400px] max-h-[70vh] relative">
           {/* Felt table background */}
           <div className="absolute inset-0 rounded-[50%] bg-gradient-to-br from-felt-700 via-felt-600 to-felt-800 border-4 border-felt-900 shadow-2xl overflow-hidden">
             <div className="absolute inset-0 opacity-5" style={{

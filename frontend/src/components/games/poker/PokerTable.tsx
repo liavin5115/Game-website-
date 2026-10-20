@@ -12,6 +12,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const { user, updatePoints } = useAuthStore();
   const {
     game,
+    isLoading,
     isConnected,
     showReconnectBanner,
     getServerTime,
@@ -172,7 +173,18 @@ export function PokerTable({ gameId }: { gameId: number }) {
     }
   }, [rematchLoading, game, gameId, updatePoints, navigate]);
 
-  const gameState = game?.state;
+  if (isLoading || !game || !game.state) {
+    return (
+      <div className="flex items-center justify-center h-[60vh] text-gray-500 dark:text-gray-400">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-4 border-gold-500 border-t-transparent mx-auto mb-4" />
+          <p>Loading game...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const gameState = game.state;
   const metadata = gameState?.metadata || {};
   const street = (metadata.street as number) ?? 0;
   const buttonPos = (metadata.button_pos as number) ?? 0;
@@ -182,8 +194,9 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const bbAmount = (metadata.bb_amount as number) ?? 2;
 
   const players = gameState?.players || [];
-  const me = myPlayer;
-  const mySeat = me?.seat ?? 0;
+  // me should be a PlayerState from gameState.players, not a GamePlayer from game.players
+  const me = players.find((p: any) => p.id === (myPlayer as any)?.id) || players[0];
+  const mySeat = 0; // PlayerState doesn't have seat; "me" is always at bottom (seat 0 in display)
   const numPlayers = players.length;
 
   // Find current turn player

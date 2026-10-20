@@ -4,11 +4,12 @@ import { useQuery } from '@tanstack/react-query';
 import { gamesApi } from '../api/client';
 import { PokerTable } from '../components/games/poker/PokerTable';
 import { BlackjackTable } from '../components/games/blackjack/BlackjackTable';
+import { ErrorBoundary } from '../components/common/ErrorBoundary';
 
 export default function GamePage() {
   const { gameId } = useParams<{ gameId: string }>();
 
-  const { data: game, isLoading } = useQuery({
+  const { data: game, isLoading, error } = useQuery({
     queryKey: ['game', Number(gameId)],
     queryFn: async () => {
       const res = await gamesApi.get(Number(gameId));
@@ -24,6 +25,14 @@ export default function GamePage() {
     );
   }
 
+  if (error) {
+    return (
+      <div className="text-center py-12 text-red-500 dark:text-red-400">
+        Failed to load game: {(error as any)?.message || 'Unknown error'}
+      </div>
+    );
+  }
+
   if (!game) {
     return (
       <div className="text-center py-12 text-gray-500 dark:text-gray-400">
@@ -34,7 +43,11 @@ export default function GamePage() {
 
   switch (game.game_type) {
     case 'poker':
-      return <PokerTable gameId={Number(gameId)} />;
+      return (
+        <ErrorBoundary>
+          <PokerTable gameId={Number(gameId)} />
+        </ErrorBoundary>
+      );
     case 'blackjack':
       return <BlackjackTable gameId={Number(gameId)} />;
     default:
