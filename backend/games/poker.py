@@ -299,6 +299,34 @@ class PokerGame(BaseGame):
                 payouts[player["id"]] = 0
         return payouts
 
+    def get_state_for_player(self, player_id: int) -> dict:
+        """Get state visible to specific player.
+        - During play: hide all opponent hole cards
+        - At showdown: reveal cards ONLY for active players who reached showdown
+        - Folded players' cards stay hidden forever
+        - Uncontested pot (single active player): no cards revealed
+        """
+        state_dict = self.state.to_dict()
+        phase = state_dict.get("phase", "waiting")
+        players = state_dict.get("players", [])
+
+        # Count active players (not folded)
+        active_players = [p for p in players if p.get("status") == "active"]
+
+        # Determine if cards should be revealed
+        # Reveal only at showdown/finished, and only for active players
+        reveal_cards = phase in ("showdown", "finished") and len(active_players) > 1
+
+        for p in state_dict["players"]:
+            if p["id"] != player_id:
+                if reveal_cards and p.get("status") == "active":
+                    # Show hole cards for active players at showdown
+                    pass  # Keep actual cards
+                else:
+                    # Hide: during play, folded players, uncontested pot
+                    p["cards"] = ["??", "??"] if p["cards"] else []
+        return state_dict
+
     def to_json(self) -> str:
         import json
         data = self.state.to_dict()

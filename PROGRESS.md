@@ -119,3 +119,11 @@
 - [DONE] Shuffle once at hand start, keep deck server-side only
 - [DONE] Never serialize deck or burn cards to client (removed deck_count from to_json)
 - [DONE] from_json rebuilds deck and reshuffles (not sorted order)
+
+## Poker Group A - Step 2: Visibility (DONE)
+- [DONE] One serializer (GET) shared by REST and WS
+- [DONE] Override get_state_for_player in PokerGame
+- [DONE] During play: hide all opponent hole cards
+- [DONE] At showdown: reveal only active players' cards
+- [DONE] Folded players' cards stay hidden forever
+- [DONE] Uncontested pot (single active): no cards revealed
