@@ -142,7 +142,10 @@ async def game_action(request: ActionRequest, current_user: User = Depends(get_c
 def get_game(game_id: int, current_user: User = Depends(get_current_user_optional), db: Session = Depends(get_db)):
     manager = GameManager(db)
     user_id = current_user.id if current_user else None
-    game = manager.get_game(game_id, user_id)
+    try:
+        game = manager.get_game(game_id, user_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not game:
         raise HTTPException(status_code=404, detail="Game not found")
     return game_to_response(game, user_id, db)

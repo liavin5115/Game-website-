@@ -6,6 +6,7 @@ import { gamesApi } from '../../../api/client';
 import { PokerTableDisplay, type PokerTableDisplayProps } from './PokerTableDisplay';
 import { authApi } from '../../../api/client';
 import { useAuthStore } from '../../../stores/authStore';
+import { Button } from '../../common/Button';
 
 export function PokerTable({ gameId }: { gameId: number }) {
   const navigate = useNavigate();
@@ -13,6 +14,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const {
     game,
     isLoading,
+    error: loadError,
     isConnected,
     showReconnectBanner,
     getServerTime,
@@ -25,7 +27,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
   } = usePokerGame({ gameId });
 
   const [remaining, setRemaining] = useState(0);
-  const [error, setError] = useState('');
+  const [actionError, setActionError] = useState('');
   const [showBetModal, setShowBetModal] = useState(false);
   const [pendingBetAction, setPendingBetAction] = useState<'bet' | 'raise' | null>(null);
   const [betAmount, setBetAmount] = useState(0);
@@ -101,17 +103,17 @@ export function PokerTable({ gameId }: { gameId: number }) {
 
   const handleAction = useCallback(async (actionType: string, amount?: number) => {
     if (isActionPending) return;
-    setError('');
+    setActionError('');
 
     try {
       await sendAction({ action: actionType, amount: amount || 0, turn_seq: game?.turn_seq || 0 });
     } catch (err: any) {
       if (err.response?.status === 409) {
         refetch();
-        setError('Turn expired');
-        setTimeout(() => setError(''), 2000);
+        setActionError('Turn expired');
+        setTimeout(() => setActionError(''), 2000);
       } else {
-        setError(err.response?.data?.detail || 'Action failed');
+        setActionError(err.response?.data?.detail || 'Action failed');
       }
     }
   }, [isActionPending, sendAction, game?.turn_seq, refetch]);
@@ -151,7 +153,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const handleRematch = useCallback(async () => {
     if (rematchLoading || !game) return;
     setRematchLoading(true);
-    setError('');
+    setActionError('');
 
     try {
       const res = await gamesApi.rematch({ game_id: gameId });
@@ -164,21 +166,36 @@ export function PokerTable({ gameId }: { gameId: number }) {
     } catch (err: any) {
       const detail = err.response?.data?.detail || 'Rematch failed';
       if (err.response?.status === 409) {
-        setError(detail);
+        setActionError(detail);
       } else {
-        setError(detail);
+        setActionError(detail);
       }
     } finally {
       setRematchLoading(false);
     }
   }, [rematchLoading, game, gameId, updatePoints, navigate]);
 
-  if (isLoading || !game || !game.state) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center h-[60vh] text-gray-500 dark:text-gray-400">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-4 border-gold-500 border-t-transparent mx-auto mb-4" />
           <p>Loading game...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError || !game || !game.state) {
+    return (
+      <div className="flex items-center justify-center h-[60vh] text-gray-500 dark:text-gray-400">
+        <div className="text-center">
+          <p className="text-red-500 dark:text-red-400 mb-4">
+            {loadError ? (loadError as any)?.message || 'Failed to load game' : 'Game not found'}
+          </p>
+          <Button onClick={() => refetch()} variant="primary">
+            Retry
+          </Button>
         </div>
       </div>
     );
@@ -241,7 +258,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
     isActionPending,
     isConnected,
     showReconnectBanner,
-    error,
+    error: actionError,
     isShowdown,
     showRules,
     setShowRules,

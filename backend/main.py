@@ -63,7 +63,7 @@ async def turn_timeout_sweeper():
                             db.commit()
                             await manager.broadcast_game_state(game.id, {"type": "state_changed"})
                     except Exception as e:
-                        logger.error(f"Sweeper error for game {game.id}: {e}")
+                        logger.warning(f"Sweeper error for game {game.id}: {e}")
                         db.rollback()
                 
                 # Check for abandoned rounds (all players disconnected for ABANDON_SECONDS)

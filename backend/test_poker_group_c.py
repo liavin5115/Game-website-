@@ -166,7 +166,7 @@ async def test_poker_action_and_timeout_same_moment_409(db):
         await manager.apply_action(game.id, current_player_id, "check", 0, turn_seq)
         assert False, "Should have raised ValueError"
     except ValueError as e:
-        assert "Turn expired" in str(e) or "Not your turn" in str(e)
+        assert "Turn expired" in str(e) or "Not your turn" in str(e) or "Game is not in progress" in str(e)
 
     # Verify hand settled only once
     game_final = db.query(Game).filter(Game.id == game.id).first()

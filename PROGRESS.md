@@ -433,3 +433,23 @@ Response (200): GameResponse with state visible to requesting player
 - Desktop table container: added min-h-[400px] to prevent zero-height collapse
 - tsc --noEmit passes, build passes
 
+
+## Bug Fix: Poker 500 on GET /api/games/{id} (DONE)
+
+### Root Cause
+- _check_and_apply_timeout raised ValueError when current player was not active or not on turn
+- get_game didn't catch the error -> 500
+- Timeout didn't advance turn/deadline properly -> stale deadline -> sweeper logged same error every second
+- After timeout, game could finish but deadline wasn't cleared
+
+### Fixes
+- _check_and_apply_timeout now never raises (catches all errors, clears deadline)
+- Properly advances turn, sets new deadline, finishes game after timeout
+- get_game catches errors from _check_and_apply_timeout
+- Router returns 400 for ValueError, never 500
+- Sweeper logs warning (not error) and rolls back
+- Frontend: error state with Retry button, loading spinner
+- Frontend: isMyTurn from server current_turn_user_id vs my user id
+- All 19 poker tests pass
+- Backend process did NOT restart (no 'Shutting down' or 'Started reloader' in logs)
+

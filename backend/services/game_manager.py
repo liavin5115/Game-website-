@@ -56,7 +56,8 @@ class GameManager:
             game_instance.state = game_instance.state.from_dict(state_dict)
 
     def _check_and_apply_timeout(self, game: Game, game_instance) -> bool:
-        """Check if turn_deadline expired and apply auto-action. Returns True if timeout applied."""
+        """Check if turn_deadline expired and apply auto-action. Returns True if timeout applied.
+        Never raises - catches all errors and returns False."""
         if not game.turn_deadline or game.status != GameStatus.IN_PROGRESS:
             return False
 
@@ -64,53 +65,91 @@ class GameManager:
             return False
 
         # Timeout - apply auto-action for current player
-        state_dict = game_instance.state.to_dict()
-        current_player_idx = state_dict.get("current_player", 0)
-        players = state_dict.get("players", [])
-        if current_player_idx >= len(players):
+        try:
+            state_dict = game_instance.state.to_dict()
+            current_player_idx = state_dict.get("current_player", 0)
+            players = state_dict.get("players", [])
+            if current_player_idx >= len(players):
+                # No valid current player - clear deadline
+                game.turn_deadline = None
+                return False
+
+            current_player = players[current_player_idx]
+            player_status = current_player.get("status", "")
+            if player_status not in ("playing", "active"):
+                # Player not active - clear deadline or recompute
+                game.turn_deadline = None
+                return False
+
+            player_id = current_player["id"]
+
+            # Update strikes
+            metadata = state_dict.get("metadata", {})
+            strikes = metadata.get("timeout_strikes", {}).get(str(player_id), 0)
+            strikes += 1
+            if "timeout_strikes" not in metadata:
+                metadata["timeout_strikes"] = {}
+            metadata["timeout_strikes"][str(player_id)] = strikes
+
+            # Mark auto action and away if max strikes reached
+            current_player["auto_stood"] = True
+            if strikes >= self.settings.TURN_TIMEOUT_MAX_STRIKES:
+                current_player["status"] = "away"
+
+            # Sync state back to game_instance before applying action
+            game_instance.state = game_instance.state.from_dict(state_dict)
+
+            # Apply timeout action: poker = check if allowed else fold; blackjack = stand
+            if game.game_type == GameType.POKER:
+                action = GameAction(type="check", amount=0)
+                try:
+                    game_instance.apply_action(player_id, action)
+                except ValueError:
+                    # Check not allowed (facing bet) -> fold
+                    action = GameAction(type="fold", amount=0)
+                    try:
+                        game_instance.apply_action(player_id, action)
+                    except ValueError:
+                        # Player can't act (not on turn, not active, etc.) - just skip
+                        game.turn_deadline = None
+                        return False
+            else:
+                # Blackjack: auto-stand
+                action = GameAction(type="stand", amount=0)
+                try:
+                    game_instance.apply_action(player_id, action)
+                except ValueError:
+                    game.turn_deadline = None
+                    return False
+
+            # Check if finished
+            if game_instance.is_finished():
+                game.turn_deadline = None
+                self._finish_game(game, game_instance)
+                game.state = game_instance.to_json()
+                game.pot = 0
+            else:
+                # Set new turn deadline for next player
+                self._set_turn_deadline(game, game_instance, advance_seq=True)
+                game.state = game_instance.to_json()
+                game.pot = game_instance.state.pot
+
+            # Update state with strikes and auto_stood
+            new_state_dict = game_instance.state.to_dict()
+            new_state_dict["metadata"] = metadata
+            # Preserve turn_seq from _set_turn_deadline
+            if "turn_seq" in game_instance.state.to_dict().get("metadata", {}):
+                new_state_dict["metadata"]["turn_seq"] = game_instance.state.to_dict()["metadata"]["turn_seq"]
+            game.state = json.dumps(new_state_dict)
+            game_instance.state = game_instance.state.from_dict(new_state_dict)
+
+            return True
+        except Exception as e:
+            # Never raise - log and return False
+            import logging
+            logging.warning(f"_check_and_apply_timeout error for game {game.id}: {e}")
+            game.turn_deadline = None
             return False
-
-        current_player = players[current_player_idx]
-        player_status = current_player.get("status", "")
-        if player_status not in ("playing", "active"):
-            return False
-
-        player_id = current_player["id"]
-
-        # Update strikes
-        metadata = state_dict.get("metadata", {})
-        strikes = metadata.get("timeout_strikes", {}).get(str(player_id), 0)
-        strikes += 1
-        if "timeout_strikes" not in metadata:
-            metadata["timeout_strikes"] = {}
-        metadata["timeout_strikes"][str(player_id)] = strikes
-
-        # Mark auto action and away if max strikes reached
-        current_player["auto_stood"] = True
-        if strikes >= self.settings.TURN_TIMEOUT_MAX_STRIKES:
-            current_player["status"] = "away"
-
-        # Apply timeout action: poker = check if allowed else fold; blackjack = stand
-        if game.game_type == GameType.POKER:
-            action = GameAction(type="check", amount=0)
-            try:
-                game_instance.apply_action(player_id, action)
-            except ValueError:
-                # Check not allowed (facing bet) -> fold
-                action = GameAction(type="fold", amount=0)
-                game_instance.apply_action(player_id, action)
-        else:
-            # Blackjack: auto-stand
-            action = GameAction(type="stand", amount=0)
-            game_instance.apply_action(player_id, action)
-
-        # Update state with strikes and auto_stood
-        new_state_dict = game_instance.state.to_dict()
-        new_state_dict["metadata"] = metadata
-        game.state = json.dumps(new_state_dict)
-        game_instance.state = game_instance.state.from_dict(new_state_dict)
-
-        return True
 
     def _get_server_time(self) -> datetime:
         return self._now_utc()
@@ -293,8 +332,13 @@ class GameManager:
             # Re-read state after timeout
             state_dict = game_instance.state.to_dict()
             metadata = state_dict.get("metadata", {})
-            current_player_id = state_dict["players"][state_dict["current_player"]]["id"]
-            if current_player_id != user_id:
+            players_list = state_dict.get("players", [])
+            cp_idx = state_dict.get("current_player", 0)
+            if cp_idx < len(players_list):
+                current_player_id = players_list[cp_idx]["id"]
+            else:
+                current_player_id = None
+            if current_player_id is not None and current_player_id != user_id:
                 self.db.commit()
                 self.db.refresh(game)
                 await manager.broadcast_game_state(game_id, {"type": "state_changed"})
@@ -473,8 +517,16 @@ class GameManager:
             game_class = get_game_class(game.game_type.value)
             players_data = self._get_players_data(game_id)
             game_instance = game_class.from_json(game.state, game.buy_in, players_data)
-            self._check_and_apply_timeout(game, game_instance)
-            self.db.commit()
+            try:
+                self._check_and_apply_timeout(game, game_instance)
+            except Exception as e:
+                import logging
+                logging.warning(f"get_game timeout check error for game {game_id}: {e}")
+                game.turn_deadline = None
+            try:
+                self.db.commit()
+            except Exception:
+                self.db.rollback()
 
         # Return state visible to user
         if user_id:
