@@ -12,7 +12,7 @@ GAME_METADATA = {
     "poker": {
         "name": "Texas Hold'em Poker",
         "min_players": 2,
-        "max_players": 6,
+        "max_players": 10,
         "default_buy_in": 100,
         "description": "Classic Texas Hold'em",
     },

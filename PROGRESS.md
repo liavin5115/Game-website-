@@ -127,3 +127,9 @@
 - [DONE] At showdown: reveal only active players' cards
 - [DONE] Folded players' cards stay hidden forever
 - [DONE] Uncontested pot (single active): no cards revealed
+
+## Poker Group A - Step 3: Player Count (DONE)
+- [DONE] max_players 6 → 10 in GAME_METADATA (games/__init__.py)
+- [DONE] Verified not stored in DB rows or seed data
+- [DONE] Seat assignment uses position 0-9 (GameSession.position)
+- [DONE] Blackjack unchanged (max_players=4)
