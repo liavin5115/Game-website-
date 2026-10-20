@@ -133,3 +133,14 @@
 - [DONE] Verified not stored in DB rows or seed data
 - [DONE] Seat assignment uses position 0-9 (GameSession.position)
 - [DONE] Blackjack unchanged (max_players=4)
+
+## Poker Group A - Step 4: Rules (DONE)
+- [DONE] Hand eval: best 5 of 7, all categories, wheel straight, kicker ties, split detection
+- [DONE] Button/blinds: rotation each hand, heads-up rule (button=SB, acts first preflop)
+- [DONE] Betting rounds: preflop/flop/turn/river/showdown, correct first-to-act per street, burn cards
+- [DONE] Actions: fold/check/call/bet/raise/all-in with validation (no check facing bet, min raise, short raise as all-in, no bet above stack, no out of turn)
+- [DONE] Single pot with equal-contribution assertion at showdown (fail loudly)
+- [DONE] Split pots with odd chip to first winner
+- [DONE] 10-seat logic: button rotation, first-to-act, deck never runs out (24 cards remaining)
+- [DONE] from_json restores button position and street
+- [DONE] Rule violations return 400/409 via ValueError
