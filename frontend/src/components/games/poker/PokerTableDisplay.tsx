@@ -2,6 +2,8 @@
 import { useMemo } from 'react';
 import { Card } from './Card';
 import { Button } from '../../common/Button';
+import { Modal } from '../../common/Modal';
+import { Input } from '../../common/Input';
 import { chipColors } from '../../../design/tokens';
 
 const STREET_LABELS = ['Preflop', 'Flop', 'Turn', 'River', 'Showdown'];
@@ -75,8 +77,35 @@ export interface PokerTableDisplayProps {
   isConnected: boolean;
   showReconnectBanner: boolean;
   error: string;
+  isShowdown: boolean;
+  showRules: boolean;
+  setShowRules: (v: boolean) => void;
   handleAction: (actionType: string, amount?: number) => void;
-  handleBetAction: (actionType: string, minAmount: number, maxAmount: number) => void;
+  handleFold: () => void;
+  openBetModal: (actionType: 'bet' | 'raise', minAmount: number) => void;
+  betMin: number;
+  raiseMin: number;
+  callAmount: number;
+  canCheck: boolean;
+  // Bet modal
+  betMaxAmount: number;
+  showBetModal: boolean;
+  setShowBetModal: (v: boolean) => void;
+  pendingBetAction: 'bet' | 'raise' | null;
+  betAmount: number;
+  setBetAmount: (v: number) => void;
+  confirmBet: () => void;
+  // Fold confirm
+  showFoldConfirm: boolean;
+  setShowFoldConfirm: (v: boolean) => void;
+  confirmFold: () => void;
+  // Finished panel
+  nextGameId: number | null;
+  buyIn: number;
+  userPoints: number | undefined;
+  onRematch: () => void;
+  onBackToLobby: () => void;
+  rematchLoading: boolean;
 }
 
 function PlayerSeat({
@@ -89,6 +118,7 @@ function PlayerSeat({
   status,
   autoActed,
   connected,
+  isShowdown,
 }: {
   player: any;
   isMe: boolean;
@@ -99,8 +129,9 @@ function PlayerSeat({
   status: string;
   autoActed: boolean;
   connected: boolean;
+  isShowdown: boolean;
 }) {
-  const showCards = isMe || status === 'showdown';
+  const showCards = isMe || status === 'showdown' || isShowdown;
   const isFolded = status === 'folded';
   const isAllIn = status === 'allin' || status === 'all_in';
   const isAway = status === 'away';
@@ -136,7 +167,7 @@ function PlayerSeat({
 
       {/* Cards */}
       <div className="flex gap-1 min-h-[56px] items-end">
-        {isFolded ? (
+        {isFolded && !isShowdown ? (
           <div className="flex gap-1 opacity-40">
             <Card card="??" faceDown size="sm" />
             <Card card="??" faceDown size="sm" />
@@ -306,6 +337,379 @@ function ConnectionBanner({ showReconnectBanner, isConnected }: { showReconnectB
   return null;
 }
 
+function RulesPanel({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal isOpen={true} onClose={onClose} title="Poker Rules" size="lg">
+      <div className="space-y-4 text-sm text-gray-700 dark:text-gray-300">
+        <div>
+          <h4 className="font-semibold mb-2">Blinds & Buy-in</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Big Blind = buy-in ÷ 20 (minimum 1)</li>
+            <li>Small Blind = Big Blind ÷ 2 (minimum 1)</li>
+            <li>Minimum buy-in: 40 points</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold mb-2">Betting</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>No rake</li>
+            <li>Minimum raise = Big Blind</li>
+            <li>Short raise (less than min raise) = All-in</li>
+            <li>Cannot bet more than your stack</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold mb-2">Turn Timer</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>30 seconds per turn</li>
+            <li>Timeout = Check if allowed, otherwise Fold</li>
+            <li>2 timeouts in a row = "Away" (auto check/fold instantly)</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold mb-2">Showdown & Settlement</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Best 5 of 7 cards wins</li>
+            <li>Split pots: odd chip to first winner clockwise from button</li>
+            <li>Leftover chips (unbet) refunded to your wallet</li>
+            <li>Folded players' cards stay hidden forever</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold mb-2">Disconnects</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>Game continues if you disconnect</li>
+            <li>Timer runs, auto-check/fold on timeout</li>
+            <li>{'All players disconnected > 2 min: hand plays to showdown, then settles'}</li>
+          </ul>
+        </div>
+        <div>
+          <h4 className="font-semibold mb-2">Rematch</h4>
+          <ul className="list-disc list-inside space-y-1">
+            <li>"Play Again" creates/joins a new game with same players</li>
+            <li>Only original players can rematch</li>
+            <li>Requires sufficient balance for buy-in</li>
+          </ul>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function BetRaiseModal({
+  isOpen,
+  onClose,
+  actionType,
+  amount,
+  setAmount,
+  minAmount,
+  maxAmount,
+  pot,
+  onConfirm,
+  disabled,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  actionType: 'bet' | 'raise';
+  amount: number;
+  setAmount: (v: number) => void;
+  minAmount: number;
+  maxAmount: number;
+  pot: number;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
+  const clampedAmount = Math.max(minAmount, Math.min(maxAmount, amount));
+  const halfPot = Math.floor(pot / 2);
+  const isRaise = actionType === 'raise';
+  const label = isRaise ? 'Raise to' : 'Bet';
+
+  const quickButtons = [
+    { label: 'Min', value: minAmount },
+    { label: 'Half Pot', value: Math.max(minAmount, Math.min(maxAmount, halfPot)) },
+    { label: 'Pot', value: Math.max(minAmount, Math.min(maxAmount, pot)) },
+    { label: 'All-in', value: maxAmount },
+  ];
+
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title={`${label} Amount`} size="md">
+      <div className="space-y-4">
+        <div>
+          <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            {label} (min {minAmount.toLocaleString()}, max {maxAmount.toLocaleString()})
+          </label>
+          <div className="relative">
+            <input
+              type="range"
+              min={minAmount}
+              max={maxAmount}
+              step={1}
+              value={clampedAmount}
+              onChange={(e) => setAmount(Number(e.target.value))}
+              className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+              disabled={disabled}
+            />
+            <div className="absolute bottom-full left-0 right-0 flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+              <span>{minAmount.toLocaleString()}</span>
+              <span>{maxAmount.toLocaleString()}</span>
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            <Input
+              type="number"
+              value={clampedAmount}
+              onChange={(e) => setAmount(Math.max(minAmount, Math.min(maxAmount, Number(e.target.value) || 0)))}
+              min={minAmount}
+              max={maxAmount}
+              className="w-32"
+              disabled={disabled}
+            />
+            <span className="text-sm text-gray-500 dark:text-gray-400">Total bet</span>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {quickButtons.map((btn) => (
+            <Button
+              key={btn.label}
+              variant="secondary"
+              size="sm"
+              onClick={() => setAmount(btn.value)}
+              disabled={disabled || btn.value === clampedAmount}
+            >
+              {btn.label}
+            </Button>
+          ))}
+        </div>
+
+        <div className="flex gap-3 pt-2">
+          <Button variant="secondary" onClick={onClose} className="flex-1" disabled={disabled}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} loading={disabled} className="flex-1" disabled={disabled}>
+            {label} {clampedAmount.toLocaleString()}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function FoldConfirmModal({
+  isOpen,
+  onClose,
+  onConfirm,
+  disabled,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  onConfirm: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} title="Confirm Fold" size="sm">
+      <div className="space-y-4">
+        <p className="text-gray-700 dark:text-gray-300">
+          Check is available. Folding now will forfeit the hand for free.
+          Are you sure you want to fold?
+        </p>
+        <div className="flex gap-3">
+          <Button variant="secondary" onClick={onClose} className="flex-1" disabled={disabled}>
+            Keep Playing
+          </Button>
+          <Button variant="danger" onClick={onConfirm} className="flex-1" disabled={disabled}>
+            Fold Anyway
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function FinishedPanel({
+  gameState,
+  players,
+  nextGameId,
+  buyIn,
+  userPoints,
+  onRematch,
+  onBackToLobby,
+  rematchLoading,
+}: {
+  gameState: any;
+  players: any[];
+  nextGameId: number | null;
+  buyIn: number;
+  userPoints: number | undefined;
+  onRematch: () => void;
+  onBackToLobby: () => void;
+  rematchLoading: boolean;
+}) {
+  const isShowdown = gameState?.phase === 'showdown';
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border dark:border-gray-700">
+      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 text-center">
+        {isShowdown ? 'Showdown' : 'Hand Complete'}
+      </h3>
+
+      {/* Results grid */}
+      <div className="grid gap-3 mb-6">
+        {players.map((player) => {
+          const payout = player.payout !== undefined ? player.payout : 0;
+          const bet = player.bet ?? 0;
+          const profit = payout - bet;
+          const resultStatus = player.result || player.status;
+          const isWinner = resultStatus === 'win' || resultStatus === 'split';
+
+          return (
+            <div key={player.id} className={`flex justify-between items-center p-3 rounded-lg ${isWinner ? 'bg-green-50 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-700/50'} border ${isWinner ? 'border-green-300 dark:border-green-700' : 'border-gray-200 dark:border-gray-600'}`}>
+              <div className="flex items-center gap-3">
+                <span className="font-medium text-gray-900 dark:text-white">{player.username}</span>
+                {isShowdown && player.cards && player.cards[0] !== '??' && (
+                  <div className="flex gap-1">
+                    {player.cards.map((card: string, i: number) => (
+                      <Card key={i} card={card} size="sm" />
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="flex items-center gap-3">
+                <span className={`text-sm font-bold ${resultStatus === 'win' ? 'text-green-600' : resultStatus === 'split' ? 'text-yellow-600' : resultStatus === 'folded' ? 'text-gray-500' : 'text-red-600'}`}>
+                  {resultStatus.toUpperCase()}
+                </span>
+                <span className={`font-mono font-bold ${profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-yellow-600'}`}>
+                  {profit > 0 ? '+' : ''}{profit.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Rematch / Back to lobby */}
+      <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+        <Button
+          onClick={onRematch}
+          loading={rematchLoading}
+          disabled={rematchLoading || (userPoints ?? 0) < buyIn}
+          className="min-w-[180px]"
+        >
+          {nextGameId ? 'Join Rematch' : `Play Again (${buyIn} pts)`}
+        </Button>
+        {(userPoints ?? 0) < buyIn && (
+          <span className="text-sm text-red-600 dark:text-red-400 text-center sm:text-left">
+            Insufficient balance ({(userPoints ?? 0).toLocaleString()} pts, need {buyIn.toLocaleString()} pts)
+          </span>
+        )}
+        <Button onClick={onBackToLobby} variant="secondary" size="lg">
+          Back to Lobby
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ActionBar({
+  validActions,
+  isMyTurn,
+  isActionPending,
+  isConnected,
+  remaining,
+  callAmount,
+  canCheck,
+  handleFold,
+  openBetModal,
+  betMin,
+  raiseMin,
+  handleAction,
+}: {
+  validActions: string[];
+  isMyTurn: boolean;
+  isActionPending: boolean;
+  isConnected: boolean;
+  remaining: number;
+  callAmount: number;
+  canCheck: boolean;
+  handleFold: () => void;
+  openBetModal: (actionType: 'bet' | 'raise', minAmount: number) => void;
+  betMin: number;
+  raiseMin: number;
+  handleAction: (actionType: string, amount?: number) => void;
+}) {
+  const disabled = !isMyTurn || isActionPending || remaining <= 0 || !isConnected;
+
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700 sticky bottom-0 z-20 md:static">
+      {isMyTurn && validActions.length > 0 && (
+        <div className="flex flex-wrap justify-center gap-2">
+          {validActions.includes('fold') && (
+            <Button
+              variant="danger"
+              size="sm"
+              onClick={handleFold}
+              disabled={disabled}
+              className="min-w-[100px]"
+            >
+              Fold
+            </Button>
+          )}
+          {canCheck && (
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => handleAction('check')}
+              disabled={disabled}
+              className="min-w-[100px]"
+            >
+              Check
+            </Button>
+          )}
+          {validActions.includes('call') && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => handleAction('call', callAmount)}
+              disabled={disabled}
+              className="min-w-[120px]"
+            >
+              Call {callAmount.toLocaleString()}
+            </Button>
+          )}
+          {validActions.includes('bet') && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => openBetModal('bet', betMin)}
+              disabled={disabled}
+              className="min-w-[100px]"
+            >
+              Bet
+            </Button>
+          )}
+          {validActions.includes('raise') && (
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => openBetModal('raise', raiseMin)}
+              disabled={disabled}
+              className="min-w-[100px]"
+            >
+              Raise
+            </Button>
+          )}
+        </div>
+      )}
+
+      {!isMyTurn && (
+        <p className="text-center text-sm text-gray-500 dark:text-gray-400 py-2">
+          Not your turn
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function PokerTableDisplay({
   game,
   gameState,
@@ -330,8 +734,32 @@ export function PokerTableDisplay({
   isConnected,
   showReconnectBanner,
   error,
+  isShowdown,
+  showRules,
+  setShowRules,
   handleAction,
-  handleBetAction,
+  handleFold,
+  openBetModal,
+  betMin,
+  raiseMin,
+  callAmount,
+  canCheck,
+  betMaxAmount,
+  showBetModal,
+  setShowBetModal,
+  pendingBetAction,
+  betAmount,
+  setBetAmount,
+  confirmBet,
+  showFoldConfirm,
+  setShowFoldConfirm,
+  confirmFold,
+  nextGameId,
+  buyIn,
+  userPoints,
+  onRematch,
+  onBackToLobby,
+  rematchLoading,
 }: PokerTableDisplayProps) {
   // Build seat order: start from me at bottom (index 0 in display), then clockwise
   const seatOrder = useMemo(() => {
@@ -345,15 +773,12 @@ export function PokerTableDisplay({
   // Calculate seat positions for desktop (ellipse)
   const seatPositions = useMemo(() => {
     const positions: { x: number; y: number; angle: number }[] = [];
-    // Ellipse dimensions (as percentages of container)
-    const rx = 42; // horizontal radius %
-    const ry = 30; // vertical radius %
+    const rx = 42;
+    const ry = 30;
     const centerX = 50;
     const centerY = 50;
 
     for (let i = 0; i < numPlayers; i++) {
-      // Distribute evenly around ellipse, starting from bottom (270 degrees = -90)
-      // But we want "me" at bottom, so we offset by seatOrder
       const displayIndex = seatOrder.indexOf(i);
       const angle = -90 + (displayIndex / numPlayers) * 360;
       const rad = (angle * Math.PI) / 180;
@@ -364,16 +789,31 @@ export function PokerTableDisplay({
     return positions;
   }, [numPlayers, seatOrder]);
 
+  const pot = gameState?.pot ?? 0;
+
   return (
     <div className="relative min-h-screen bg-felt-500/10 dark:bg-felt-900/10 px-4 py-6">
       <ConnectionBanner showReconnectBanner={showReconnectBanner} isConnected={isConnected} />
+
+      {/* Rules panel trigger */}
+      <div className="max-w-6xl mx-auto mb-4 flex justify-end">
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setShowRules(!showRules)}
+        >
+          {showRules ? 'Hide' : 'Show'} Rules
+        </Button>
+      </div>
+
+      {/* Rules Panel */}
+      {showRules && <RulesPanel onClose={() => setShowRules(false)} />}
 
       {/* Desktop: Oval Table Layout */}
       <div className="hidden md:block relative">
         <div className="max-w-6xl mx-auto aspect-[3/2] max-h-[70vh] relative">
           {/* Felt table background */}
           <div className="absolute inset-0 rounded-[50%] bg-gradient-to-br from-felt-700 via-felt-600 to-felt-800 border-4 border-felt-900 shadow-2xl overflow-hidden">
-            {/* Inner felt pattern */}
             <div className="absolute inset-0 opacity-5" style={{
               backgroundImage: 'radial-gradient(ellipse at center, transparent 60%, rgba(0,0,0,0.3) 100%)',
             }} />
@@ -427,6 +867,7 @@ export function PokerTableDisplay({
                   status={playerStatus}
                   autoActed={autoActed}
                   connected={connected}
+                  isShowdown={isShowdown}
                 />
                 {/* Timer ring on active seat */}
                 {isCurrent && game.status === 'in_progress' && (
@@ -441,7 +882,7 @@ export function PokerTableDisplay({
       </div>
 
       {/* Mobile: Stacked Layout */}
-      <div className="md:hidden space-y-4">
+      <div className="md:hidden space-y-4 pb-24">
         {/* Community cards & pot at top */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700">
           <CommunityCards cards={gameState.community_cards || []} street={street} />
@@ -496,6 +937,7 @@ export function PokerTableDisplay({
                         status={player.status}
                         autoActed={autoActed}
                         connected={connected}
+                        isShowdown={isShowdown}
                       />
                     </div>
                   );
@@ -530,37 +972,85 @@ export function PokerTableDisplay({
               </div>
             )}
 
-            {game.status === 'in_progress' && isMyTurn && validActions.length > 0 && (
-              <div className="flex flex-wrap justify-center gap-2">
-                {validActions.map((action) => {
-                  const isBetOrRaise = action === 'bet' || action === 'raise';
-                  return (
-                    <Button
-                      key={action}
-                      variant={action === 'fold' ? 'danger' : 'primary'}
-                      size="sm"
-                      onClick={() => isBetOrRaise ? handleBetAction(action, 0, me.chips) : handleAction(action)}
-                      disabled={isActionPending || remaining <= 0 || !isConnected}
-                    >
-                      {action.charAt(0).toUpperCase() + action.slice(1)}
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
-
-            {!isMyTurn && game.status === 'in_progress' && (
-              <p className="text-center text-sm text-gray-500 dark:text-gray-400">
-                Waiting for {currentTurnPlayerName || 'opponent'}...
-              </p>
-            )}
+            <ActionBar
+              validActions={validActions}
+              isMyTurn={isMyTurn}
+              isActionPending={isActionPending}
+              isConnected={isConnected}
+              remaining={remaining}
+              callAmount={callAmount}
+              canCheck={canCheck}
+              handleFold={handleFold}
+              openBetModal={openBetModal}
+              betMin={betMin}
+              raiseMin={raiseMin}
+              handleAction={handleAction}
+            />
 
             {me.status === 'folded' && (
-              <p className="text-center text-sm text-gray-500 dark:text-gray-400">You folded</p>
+              <p className="text-center text-sm text-gray-500 dark:text-gray-400 mt-2">You folded</p>
             )}
           </div>
         )}
       </div>
+
+      {/* Desktop Action Bar (fixed bottom) */}
+      <div className="md:block hidden fixed bottom-0 left-0 right-0 px-4 pb-4 max-w-6xl mx-auto z-20">
+        <ActionBar
+          validActions={validActions}
+          isMyTurn={isMyTurn}
+          isActionPending={isActionPending}
+          isConnected={isConnected}
+          remaining={remaining}
+          callAmount={callAmount}
+          canCheck={canCheck}
+          handleFold={handleFold}
+          openBetModal={openBetModal}
+          betMin={betMin}
+          raiseMin={raiseMin}
+          handleAction={handleAction}
+        />
+      </div>
+
+      {/* Finished / Showdown Panel */}
+      {(game.status === 'finished' || isShowdown) && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/50">
+          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+            <FinishedPanel
+              gameState={gameState}
+              players={players}
+              nextGameId={nextGameId}
+              buyIn={buyIn}
+              userPoints={userPoints}
+              onRematch={onRematch}
+              onBackToLobby={onBackToLobby}
+              rematchLoading={rematchLoading}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Bet/Raise Modal */}
+      <BetRaiseModal
+        isOpen={showBetModal}
+        onClose={() => setShowBetModal(false)}
+        actionType={pendingBetAction!}
+        amount={betAmount}
+        setAmount={setBetAmount}
+        minAmount={pendingBetAction === 'bet' ? betMin : raiseMin}
+        maxAmount={betMaxAmount}
+        pot={pot}
+        onConfirm={confirmBet}
+        disabled={isActionPending}
+      />
+
+      {/* Fold Confirm Modal */}
+      <FoldConfirmModal
+        isOpen={showFoldConfirm}
+        onClose={() => setShowFoldConfirm(false)}
+        onConfirm={confirmFold}
+        disabled={isActionPending}
+      />
 
       {/* Error display */}
       {error && (

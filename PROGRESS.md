@@ -390,9 +390,14 @@ Response (200): GameResponse with state visible to requesting player
 - [DONE] tsc --noEmit passes
 - [DONE] Build passes
 
-### Next: Poker Frontend Part 3 - Action Bar
-- [TODO] Bet/raise modal with slider/input, min/max validation
-- [TODO] Action buttons (fold/check/call/bet/raise) wired to server
-- [TODO] Showdown reveal animation
-- [TODO] Finished panel with result/payout per player
-- [TODO] Rematch button in finished state
+## Poker Frontend - Part 3 (DONE)
+
+### Action Bar, Results, Rematch, Full Test
+- [DONE] ACTION BAR: Fixed at bottom (mobile), desktop bar. Fold, Check/Call {amount}, Bet, Raise buttons. Only shows server-valid actions, disabled with reason. Enabled only on my turn, disabled while request in flight and while disconnected. turn_seq sent with each action. 409 → silent refetch + toast.
+- [DONE] BET/RAISE CONTROL: Slider + number input using server min/max, quick buttons (Min, ½ Pot, Pot, All-in), amount clamped, converted with Number(), touch-friendly. Confirm button "Raise to {amount}".
+- [DONE] FOLD CONFIRMATION: Fold that would be free check shows confirm step.
+- [DONE] SHOWDOWN AND RESULT: Winners highlighted, revealed cards for showdown players, result + payout from server ("+85", "-20", "Split +40"). Uncontested pot shows winner without cards. Balance refreshes.
+- [DONE] FINISHED PANEL: "Play Again ({buy_in} pts)" with rematch (disabled with reason when balance too low, "Join Rematch" when next_game_id exists, 409 → message + "Back to lobby") and "Back to Lobby".
+- [DONE] RESUME AND RECONNECT: Refresh mid-hand rebuilds table/timer/cards from server; active-game banner/redirect works for poker; finished-while-away shows finished panel.
+- [DONE] RULES PANEL: Collapsible "Rules" panel (blinds buy_in//20 and half, no rake, leftover refunded, 30s/turn, timeout = check or fold).
+- [DONE] tsc --noEmit passes, build passes, no temporary logs or dev preview route.

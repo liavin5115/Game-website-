@@ -2,13 +2,16 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePokerGame } from '../../../hooks/usePokerGame';
+import { gamesApi } from '../../../api/client';
 import { PokerTableDisplay, type PokerTableDisplayProps } from './PokerTableDisplay';
+import { authApi } from '../../../api/client';
+import { useAuthStore } from '../../../stores/authStore';
 
 export function PokerTable({ gameId }: { gameId: number }) {
   const navigate = useNavigate();
+  const { user, updatePoints } = useAuthStore();
   const {
     game,
-    isLoading,
     isConnected,
     showReconnectBanner,
     getServerTime,
@@ -22,6 +25,13 @@ export function PokerTable({ gameId }: { gameId: number }) {
 
   const [remaining, setRemaining] = useState(0);
   const [error, setError] = useState('');
+  const [showBetModal, setShowBetModal] = useState(false);
+  const [pendingBetAction, setPendingBetAction] = useState<'bet' | 'raise' | null>(null);
+  const [betAmount, setBetAmount] = useState(0);
+  const [betMaxAmount, setBetMaxAmount] = useState(0);
+  const [showFoldConfirm, setShowFoldConfirm] = useState(false);
+  const [showRules, setShowRules] = useState(false);
+  const [rematchLoading, setRematchLoading] = useState(false);
   const countdownIntervalRef = useRef<number>();
   const refetchTimeoutRef = useRef<number>();
 
@@ -81,9 +91,12 @@ export function PokerTable({ gameId }: { gameId: number }) {
   // Refresh wallet on finish
   useEffect(() => {
     if (game?.status === 'finished') {
+      authApi.me().then(res => {
+        updatePoints(res.data.points);
+      });
       window.dispatchEvent(new CustomEvent('wallet:refetch'));
     }
-  }, [game?.status]);
+  }, [game?.status, updatePoints]);
 
   const handleAction = useCallback(async (actionType: string, amount?: number) => {
     if (isActionPending) return;
@@ -102,26 +115,69 @@ export function PokerTable({ gameId }: { gameId: number }) {
     }
   }, [isActionPending, sendAction, game?.turn_seq, refetch]);
 
-  const handleBetAction = useCallback((actionType: string, minAmount: number, maxAmount: number) => {
-    // This will be handled by a modal in Part 3
-    // For Part 2, just log
-    console.log('Bet action:', actionType, minAmount, maxAmount);
-  }, []);
+  const openBetModal = useCallback((actionType: 'bet' | 'raise', minAmount: number) => {
+    const meChips = (myPlayer as any)?.chips ?? 0;
+    const meBet = myPlayer?.bet ?? 0;
+    const maxAmount = actionType === 'bet' ? meChips : meChips + meBet;
+    setPendingBetAction(actionType);
+    setBetAmount(minAmount);
+    setBetMaxAmount(maxAmount);
+    setShowBetModal(true);
+  }, [myPlayer]);
 
-  if (isLoading || !game || !game?.state) {
-    return (
-      <div className="flex items-center justify-center h-[60vh] text-gray-500 dark:text-gray-400">
-        Loading game...
-      </div>
-    );
-  }
+  const confirmBet = useCallback(() => {
+    if (pendingBetAction) {
+      handleAction(pendingBetAction, betAmount);
+      setShowBetModal(false);
+      setPendingBetAction(null);
+    }
+  }, [pendingBetAction, betAmount, handleAction]);
 
-  const gameState = game.state;
+  const handleFold = useCallback(() => {
+    // If check is available, folding is free - require confirmation
+    if (validActions.includes('check')) {
+      setShowFoldConfirm(true);
+    } else {
+      handleAction('fold');
+    }
+  }, [validActions, handleAction]);
+
+  const confirmFold = useCallback(() => {
+    handleAction('fold');
+    setShowFoldConfirm(false);
+  }, [handleAction]);
+
+  const handleRematch = useCallback(async () => {
+    if (rematchLoading || !game) return;
+    setRematchLoading(true);
+    setError('');
+
+    try {
+      const res = await gamesApi.rematch({ game_id: gameId });
+      const newGame = res.data;
+
+      const meRes = await authApi.me();
+      updatePoints(meRes.data.points);
+
+      navigate(`/game/${newGame.id}/waiting`);
+    } catch (err: any) {
+      const detail = err.response?.data?.detail || 'Rematch failed';
+      if (err.response?.status === 409) {
+        setError(detail);
+      } else {
+        setError(detail);
+      }
+    } finally {
+      setRematchLoading(false);
+    }
+  }, [rematchLoading, game, gameId, updatePoints, navigate]);
+
+  const gameState = game?.state;
   const metadata = gameState?.metadata || {};
   const street = (metadata.street as number) ?? 0;
   const buttonPos = (metadata.button_pos as number) ?? 0;
   const sbIdx = (metadata.sb_idx as number) ?? 1;
-  const bbIdx = (metadata.bb_idx as number) ?? (gameState?.players.length > 2 ? 2 : 0);
+  const bbIdx = (metadata.bb_idx as number) ?? ((gameState?.players?.length ?? 0) > 2 ? 2 : 0);
   const sbAmount = (metadata.sb_amount as number) ?? 1;
   const bbAmount = (metadata.bb_amount as number) ?? 2;
 
@@ -135,8 +191,19 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const currentTurnPlayer = players[currentTurnIdx];
   const currentTurnPlayerName = currentTurnPlayer?.username;
 
-  const turnSeconds = game.turn_seconds ?? 30;
+  const turnSeconds = game?.turn_seconds ?? 30;
   const isLowTime = remaining <= 5 && remaining > 0;
+
+  const canCheck = validActions.includes('check');
+
+  // Get min/max from server metadata for bet/raise
+  const currentBet = gameState?.current_bet ?? 0;
+  const myBet = me?.bet ?? 0;
+  const callAmount = currentBet - myBet;
+  const betMin = gameState?.min_raise ?? bbAmount;
+  const raiseMin = currentBet + (gameState?.min_raise ?? bbAmount);
+
+  const isShowdown = gameState?.phase === 'showdown' || game?.status === 'finished';
 
   const displayProps: PokerTableDisplayProps = {
     game,
@@ -162,8 +229,35 @@ export function PokerTable({ gameId }: { gameId: number }) {
     isConnected,
     showReconnectBanner,
     error,
+    isShowdown,
+    showRules,
+    setShowRules,
     handleAction,
-    handleBetAction,
+    handleFold,
+    openBetModal,
+    betMin,
+    raiseMin,
+    callAmount,
+    canCheck,
+    // Bet modal props
+    betMaxAmount,
+    showBetModal,
+    setShowBetModal,
+    pendingBetAction,
+    betAmount,
+    setBetAmount,
+    confirmBet,
+    // Fold confirm props
+    showFoldConfirm,
+    setShowFoldConfirm,
+    confirmFold,
+    // Finished panel props
+    nextGameId: game?.next_game_id ?? null,
+    buyIn: game?.buy_in ?? 0,
+    userPoints: user?.points,
+    onRematch: handleRematch,
+    onBackToLobby: () => navigate('/lobby'),
+    rematchLoading,
   };
 
   return <PokerTableDisplay {...displayProps} />;
