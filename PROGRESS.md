@@ -177,3 +177,166 @@
 - [DONE] Rematch works for poker (generic, same as blackjack)
 - [DONE] Wallet stats for poker: net per game from TX, games_played, wins, losses, pushes (split pot = push when net=0)
 - [DONE] Tests: test_poker.py covers all Group B requirements (11 tests passing)
+
+## Poker Group C - Timer, Broadcasts, Presence, 10-Player, E2E (DONE)
+- [DONE] Timer hook: turn_deadline, turn_seq, sweeper (1s), 409 for expired/wrong turn
+  - POKER_TURN_SECONDS=30 config (per game type)
+  - Timeout: check if allowed, else fold; never auto-call/raise
+  - Strikes/away: 2 timeouts -> "away" (auto check/fold instantly)
+  - Race: timeout and action same moment -> one wins, other 409
+- [DONE] Broadcasts: state_changed after start, action, hand end, timeout; lobby update on create/join/leave/start
+  - Presence: connected flag in response; GET /api/games/active includes poker
+  - Abandoned/idle rules same as blackjack
+- [DONE] 10 players: join under row lock (11th gets 400); sweeper handles multiple timeouts; broadcasts non-blocking (asyncio.gather)
+- [DONE] No relative imports; rule errors -> 400/409 never 500
+- [DONE] Tests: test_poker_group_c.py (8 tests covering all Group C requirements)
+- [DONE] All tests pass: 20 total (11 Group B + 8 Group C + 1 rematch)
+
+## Poker API Contract (Final)
+
+### Endpoints
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | /api/games/create | ✅ | Create poker game, deduct buy-in |
+| POST | /api/games/join | ✅ | Join waiting game, deduct buy-in |
+| POST | /api/games/leave | ✅ | Leave waiting game, refund |
+| POST | /api/games/start | ✅ | Host starts (min 2 players) |
+| POST | /api/games/action | ✅ | Player action (fold/check/call/bet/raise) |
+| POST | /api/games/rematch | ✅ | Idempotent rematch |
+| GET | /api/games/{id} | Optional | Full state (opponent cards hidden) |
+| GET | /api/games/active/me | ✅ | Current user's active/waiting game |
+| GET | /api/lobby/games | ❌ | List waiting poker games |
+
+### Request/Response JSON
+
+#### POST /api/games/create
+```json
+{ "game_type": "poker", "buy_in": 100 }
+```
+Response (201): GameResponse
+
+#### POST /api/games/join
+```json
+{ "game_id": 1 }
+```
+Response (200): GameResponse
+
+#### POST /api/games/action
+```json
+{ "game_id": 1, "action": "call", "amount": 0, "turn_seq": 5 }
+```
+Valid actions: "fold", "check", "call", "bet", "raise"
+- "bet"/"raise": amount = total bet size (not additional)
+- turn_seq: from previous response for race safety
+
+Response (200): GameResponse
+Errors: 400 (invalid action), 409 (turn expired/not your turn)
+
+#### GET /api/games/{id}
+Response (200): GameResponse with state visible to requesting player
+
+### GameResponse Fields
+```json
+{
+  "id": 1,
+  "game_type": "poker",
+  "status": "waiting|in_progress|finished|cancelled",
+  "buy_in": 100,
+  "pot": 300,
+  "host_id": 1,
+  "max_players": 10,
+  "min_players": 2,
+  "players": [
+    {
+      "id": 1,
+      "username": "player1",
+      "seat": 0,
+      "bet": 100,
+      "status": "playing|active|folded|away|waiting",
+      "auto_stood": false,
+      "away": false,
+      "connected": true
+    }
+  ],
+  "winner_id": null,
+  "state": { ... },  // see State object below
+  "current_turn_user_id": 2,
+  "my_valid_actions": ["fold", "call", "raise"],
+  "created_at": "2026-10-20T12:00:00",
+  "started_at": "2026-10-20T12:01:00",
+  "finished_at": null,
+  "next_game_id": null,
+  "turn_deadline": "2026-10-20T12:01:30Z",
+  "turn_seq": 5,
+  "server_time": "2026-10-20T12:01:15Z",
+  "turn_seconds": 30
+}
+```
+
+### State Object (from GET /api/games/{id})
+```json
+{
+  "phase": "waiting|betting|playing|showdown|finished",
+  "players": [
+    {
+      "id": 1,
+      "username": "player1",
+      "chips": 85,
+      "cards": ["As", "Kh"],  // own cards visible; opponents ["??","??"]
+      "bet": 10,
+      "total_bet": 10,
+      "status": "active|folded|away"
+    }
+  ],
+  "pot": 30,
+  "current_bet": 10,
+  "min_raise": 10,
+  "current_player": 1,  // index in players array
+  "community_cards": ["7d", "9h", "Js"],
+  "metadata": {
+    "button_pos": 0,
+    "street": 1,  // 0=preflop,1=flop,2=turn,3=river,4=showdown
+    "sb_amount": 2,
+    "bb_amount": 5,
+    "sb_idx": 1,
+    "bb_idx": 2,
+    "turn_seq": 5,
+    "timeout_strikes": {"1": 0, "2": 1}
+  }
+}
+```
+
+### Status Values
+- Game.status: "waiting", "in_progress", "finished", "cancelled"
+- Player.status: "active" (in hand), "folded", "away" (2+ strikes), "waiting" (in lobby)
+- Phase: "waiting", "betting" (preflop), "playing" (postflop), "showdown", "finished"
+
+### Turn Fields
+- turn_deadline: ISO8601 UTC when turn expires (null if not in_progress)
+- turn_seq: increments each turn; must match on action or 409
+- server_time: current server time for clock sync
+- turn_seconds: configured turn length (30 for poker)
+
+### Per-Player Fields
+- seat: 0-9 (position at table)
+- bet: current street bet
+- total_bet: total committed this hand
+- status: "active", "folded", "away"
+- auto_stood: true if last action was timeout
+- away: true if 2+ timeout strikes (auto check/fold)
+- connected: true if WS connected
+
+### WebSocket Messages
+- WS: `ws://host/ws/game/{game_id}?token=`
+- Server -> Client: `{"type": "state_changed"}` (client refetches GET /api/games/{id})
+- Server -> Client: `{"type": "game_state", "payload": {...}}` (on connect)
+- Client -> Server: `{"type": "ping"}` (heartbeat)
+- Server -> Client: `{"type": "pong"}`
+- Lobby WS: `ws://host/ws/lobby?token=` -> `{"type": "lobby_changed", "game_id": 1}`
+
+### Error Codes
+- 400: Invalid action, insufficient points, game full, not in game
+- 403: Not host (start), not a player (rematch)
+- 409: Turn expired (stale turn_seq), not your turn, rematch unavailable
+- 404: Game not found
+- 500: Never for rule violations (all ValueError -> 400/409)

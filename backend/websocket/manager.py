@@ -1,6 +1,7 @@
 """WebSocket connection manager for real-time game updates"""
 from typing import Dict, Set
 from fastapi import WebSocket
+import asyncio
 import json
 import time
 
@@ -64,10 +65,13 @@ class ConnectionManager:
         if not conns:
             return
         message = json.dumps({"type": "game_state", "payload": state})
-        for user_id, ws in list(conns.items()):
-            if user_id == exclude_user:
-                continue
-            await self._send(game_id, user_id, ws, message)
+        tasks = [
+            self._send(game_id, user_id, ws, message)
+            for user_id, ws in list(conns.items())
+            if user_id != exclude_user
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def broadcast_state_changed(self, game_id: int):
         """Push-only signal: clients refetch GET /api/games/{id}"""
@@ -75,17 +79,27 @@ class ConnectionManager:
         if not conns:
             return
         message = json.dumps({"type": "state_changed"})
-        for user_id, ws in list(conns.items()):
-            await self._send(game_id, user_id, ws, message)
+        tasks = [
+            self._send(game_id, user_id, ws, message)
+            for user_id, ws in list(conns.items())
+        ]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def broadcast_lobby_update(self, message: dict):
         """Broadcast lobby update to all lobby connections"""
         message_str = json.dumps(message)
+        tasks = []
         for ws in list(self.lobby_connections):
-            try:
-                await ws.send_text(message_str)
-            except Exception:
-                self.lobby_connections.discard(ws)
+            tasks.append(self._send_lobby(ws, message_str))
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _send_lobby(self, ws: WebSocket, message: str):
+        try:
+            await ws.send_text(message)
+        except Exception:
+            self.lobby_connections.discard(ws)
 
     async def send_personal(self, user_id: int, message: dict):
         """Send message to user across all their game connections"""

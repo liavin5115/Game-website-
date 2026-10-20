@@ -186,14 +186,15 @@ class GameManager:
     async def join_game(self, game_id: int, user_id: int) -> GameSession:
         from sqlalchemy.exc import IntegrityError
 
-        game = self.db.query(Game).filter(Game.id == game_id).first()
+        # Lock game row to prevent race on max_players check
+        game = self.db.query(Game).filter(Game.id == game_id).with_for_update().first()
         if not game:
             raise ValueError("Game not found")
 
         if game.status != GameStatus.WAITING:
             raise ValueError("Game is not accepting players")
 
-        # Check player limit
+        # Check player limit under row lock
         metadata = get_game_metadata(game.game_type.value)
         current_players = self.db.query(GameSession).filter(GameSession.game_id == game_id).count()
         if current_players >= metadata["max_players"]:
@@ -348,7 +349,7 @@ class GameManager:
             raise
 
         # Broadcast update
-        await manager.broadcast_game_state(game_id, {"type": "state_changed"})
+        await manager.broadcast_state_changed(game_id)
 
         return game
 
