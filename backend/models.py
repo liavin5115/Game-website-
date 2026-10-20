@@ -100,6 +100,7 @@ class GameSession(Base):
 
     __table_args__ = (
         UniqueConstraint('game_id', 'user_id', name='uq_game_user'),
+        UniqueConstraint('game_id', 'position', name='uq_game_position'),
     )
 
 

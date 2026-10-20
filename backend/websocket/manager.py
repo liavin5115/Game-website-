@@ -53,7 +53,7 @@ class ConnectionManager:
 
     async def _send(self, game_id: int, user_id: int, ws: WebSocket, message: str) -> bool:
         try:
-            await ws.send_text(message)
+            await asyncio.wait_for(ws.send_text(message), timeout=2.0)
             return True
         except Exception:
             self.disconnect(game_id, user_id, ws)

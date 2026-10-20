@@ -218,7 +218,7 @@ class GameManager:
             commit=False
         )
 
-        # Add player to game - unique constraint prevents duplicate joins
+        # Add player to game - unique constraint on (game_id, position) prevents race
         position = current_players
         session = GameSession(
             game_id=game_id,
@@ -246,8 +246,11 @@ class GameManager:
             await manager.broadcast_lobby_update({"type": "lobby_changed", "game_id": game_id})
 
             return session
-        except IntegrityError:
+        except IntegrityError as e:
             self.db.rollback()
+            # Check which constraint failed
+            if "uq_game_position" in str(e):
+                raise ValueError("Game is full")
             raise ValueError("Already in this game")
 
     def _get_players_data(self, game_id: int) -> list[dict]:

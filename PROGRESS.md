@@ -340,3 +340,42 @@ Response (200): GameResponse with state visible to requesting player
 - 409: Turn expired (stale turn_seq), not your turn, rematch unavailable
 - 404: Game not found
 - 500: Never for rule violations (all ValueError -> 400/409)
+
+## Poker Frontend - Part 1 (DONE)
+
+### Step 0 - Backend Sanity Checks
+- [DONE] Join concurrency: Added unique constraint on (game_id, position) + row lock count check in same transaction. 11th player gets 400. Tested with threads.
+- [DONE] WebSocket timeout: Added 2s timeout to each send in manager._send; dead sockets dropped without blocking gather.
+- [DONE] Full test suite: 20 tests pass (11 Group B + 8 Group C + 1 rematch).
+
+### Step 1 - Contract
+- [DONE] Compact table of real JSON fields documented in PR (matches API contract above).
+
+### Step 2 - Types & API
+- [DONE] src/types/index.ts extended with GamePlayer, host_id, max_players, min_players, current_turn_user_id, my_valid_actions, total_bet.
+- [DONE] gamesApi reused (create, join, leave, start, get, action, rematch, active) with turn_seq payload.
+- [DONE] Created usePokerGame(gameId) hook on top of useGameSocket: fetch, refetch on state_changed, clockOffset from server_time.
+
+### Step 3 - Lobby
+- [DONE] Poker games show players/max (e.g., 3/10), host, buy-in.
+- [DONE] Create Game modal validates buy-in >= 40 and balance, shows blinds hint ("Blinds 2/5" = BB buy_in//20, SB = BB//2, min 1).
+- [DONE] Join disabled with reason when full or balance too low.
+- [DONE] Navigate to /game/:id/waiting.
+
+### Step 4 - Waiting Room
+- [DONE] Player list for up to 10 with host badge and count (4/10).
+- [DONE] Host-only Start disabled until 2 players.
+- [DONE] Leave with refund.
+- [DONE] Auto-redirect to /game/:id when in_progress.
+- [DONE] Route /game/:id picks BlackjackTable or PokerTable by game_type (PokerTable placeholder).
+
+### Tests
+- [DONE] tsc --noEmit passes
+- [DONE] Build passes
+- [DONE] Manual test with 2 accounts: create poker, join, see live updates, start, redirect to game table.
+
+### Next: Poker Frontend Part 2 - Table UI
+- [TODO] PokerTable: community cards, player seats (up to 10), action buttons with min/max raise, turn timer with countdown, bet/raise modal, showdown reveal, finished panel with result/payout.
+- [TODO] Reuse timer/countdown patterns from BlackjackTable.
+- [TODO] Handle disconnected/away badges, reconnection banner.
+- [TODO] Rematch button in finished state.

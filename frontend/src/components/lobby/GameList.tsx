@@ -5,9 +5,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { lobbyApi, gamesApi } from '../../api/client';
 import { useAuthStore } from '../../stores/authStore';
 import { useLobbySocket } from '../../hooks/useLobbySocket';
-import type { LobbyGame } from '../../types';
+import type { LobbyGame, GameType } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
+import { Input } from '../common/Input';
 
 const gameTypeLabels: Record<string, string> = {
   poker: '♠ Poker',
@@ -45,8 +46,16 @@ export function GameList() {
       return res.data;
     },
     enabled: isAuthenticated && isVerified,
-    refetchInterval: (isAuthenticated && isVerified) ? 5000 : false, // Poll every 5s as backup
+    refetchInterval: (isAuthenticated && isVerified) ? 5000 : false,
   });
+
+  // Poker blinds calculation
+  const getBlindsHint = (buyIn: number, gameType: string): string => {
+    if (gameType !== 'poker') return '';
+    const bb = Math.max(1, Math.floor(buyIn / 20));
+    const sb = Math.max(1, Math.floor(bb / 2));
+    return `Blinds ${sb}/${bb}`;
+  };
 
   const handleCreateGame = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,7 +79,6 @@ export function GameList() {
   const handleJoin = async (game: LobbyGame) => {
     try {
       await gamesApi.join({ game_id: game.id });
-      // Refresh user balance after join
       queryClient.invalidateQueries({ queryKey: ['auth', 'me'] });
       navigate(`/game/${game.id}/waiting`);
     } catch (err: any) {
@@ -90,6 +98,20 @@ export function GameList() {
     return { allowed: true };
   };
 
+  // Validate create form
+  const createValidation = (): string | null => {
+    const gt = gameTypes.find((g: GameType) => g.type === createForm.game_type);
+    if (!gt) return 'Select a game type';
+    
+    if (createForm.game_type === 'poker') {
+      if (createForm.buy_in < 40) return 'Poker minimum buy-in is 40';
+    }
+    
+    if (createForm.buy_in > (user?.points || 0)) return 'Insufficient balance';
+    if (createForm.buy_in <= 0) return 'Buy-in must be positive';
+    return null;
+  };
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -103,7 +125,7 @@ export function GameList() {
             className="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
           >
             <option value="">All Games</option>
-            {gameTypes.map((gt: any) => (
+            {gameTypes.map((gt: GameType) => (
               <option key={gt.type} value={gt.type}>
                 {gt.name}
               </option>
@@ -139,6 +161,7 @@ export function GameList() {
                       </p>
                       <p className="text-sm text-gray-500 dark:text-gray-400">
                         {game.players.length}/{game.max_players} players • Buy-in: {game.buy_in} pts
+                        {game.game_type === 'poker' && ` • ${getBlindsHint(game.buy_in, 'poker')}`}
                       </p>
                     </div>
                   </div>
@@ -186,7 +209,7 @@ export function GameList() {
               onChange={(e) => setCreateForm({ ...createForm, game_type: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
             >
-              {gameTypes.map((gt: any) => (
+              {gameTypes.map((gt: GameType) => (
                 <option key={gt.type} value={gt.type}>
                   {gt.name} (Default: {gt.default_buy_in} pts)
                 </option>
@@ -196,22 +219,27 @@ export function GameList() {
 
           <div>
             <label className="block text-sm font-medium mb-1">Buy-in</label>
-            <input
+            <Input
               type="number"
               value={createForm.buy_in}
               onChange={(e) => setCreateForm({ ...createForm, buy_in: Number(e.target.value) || 0 })}
-              min={10}
+              min={createForm.game_type === 'poker' ? 40 : 10}
               max={user?.points || 10000}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-800"
             />
-            <p className="text-sm text-gray-500 mt-1">Balance: {user?.points || 0} pts</p>
+            <p className="text-sm text-gray-500 mt-1">
+              Balance: {user?.points || 0} pts
+              {createForm.game_type === 'poker' && ` • Min: 40 pts • ${getBlindsHint(createForm.buy_in, 'poker')}`}
+            </p>
+            {createValidation() && (
+              <p className="text-sm text-red-500 mt-1">{createValidation()}</p>
+            )}
           </div>
 
           <div className="flex gap-3 pt-4">
             <Button variant="secondary" type="button" onClick={() => setShowCreateModal(false)} className="flex-1">
               Cancel
             </Button>
-            <Button type="submit" loading={createLoading} className="flex-1">
+            <Button type="submit" loading={createLoading} disabled={!!createValidation()} className="flex-1">
               Create
             </Button>
           </div>

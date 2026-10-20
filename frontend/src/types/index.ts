@@ -42,6 +42,12 @@ export interface Game {
   turn_seq?: number;
   server_time?: string;
   turn_seconds?: number;
+  host_id?: number;
+  max_players?: number;
+  min_players?: number;
+  players?: GamePlayer[];
+  current_turn_user_id?: number;
+  my_valid_actions?: string[];
 }
 
 export interface GameState {
@@ -66,6 +72,18 @@ export interface PlayerState {
   doubled?: boolean;
   result?: string;
   payout?: number;
+  auto_stood?: boolean;
+  away?: boolean;
+  connected?: boolean;
+  total_bet?: number;
+}
+
+export interface GamePlayer {
+  id: number;
+  username: string;
+  seat: number;
+  bet: number;
+  status: 'playing' | 'active' | 'folded' | 'away' | 'waiting';
   auto_stood?: boolean;
   away?: boolean;
   connected?: boolean;
