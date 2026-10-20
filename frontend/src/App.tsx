@@ -120,8 +120,8 @@ function App() {
           <Route path="/game/:gameId" element={<GamePage />} />
           <Route path="/wallet" element={<WalletPage />} />
           <Route path="/" element={<Navigate to="/lobby" replace />} />
-        </Route>
-        <Route path="*" element={<Navigate to="/lobby" replace />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/lobby" replace />} />
       </Routes>
     </BrowserRouter>
   );

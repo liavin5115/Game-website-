@@ -374,8 +374,25 @@ Response (200): GameResponse with state visible to requesting player
 - [DONE] Build passes
 - [DONE] Manual test with 2 accounts: create poker, join, see live updates, start, redirect to game table.
 
-### Next: Poker Frontend Part 2 - Table UI
-- [TODO] PokerTable: community cards, player seats (up to 10), action buttons with min/max raise, turn timer with countdown, bet/raise modal, showdown reveal, finished panel with result/payout.
-- [TODO] Reuse timer/countdown patterns from BlackjackTable.
-- [TODO] Handle disconnected/away badges, reconnection banner.
-- [TODO] Rematch button in finished state.
+## Poker Frontend - Part 2 (DONE)
+
+### Table Display for 2-10 Players
+- [DONE] CARD: Reuse fixed Card component (sm/md/lg sizes, real card back for hidden cards). Opponents show two card backs while in hand; folded players show dimmed backs; at showdown server sends real cards for players who reached showdown.
+- [DONE] LAYOUT DESKTOP (md+): Oval felt table with seats placed around ellipse using trigonometry, up to 10 seats, ROTATED so "me" is always at bottom center; other players keep seat order clockwise. Community cards (5 slots, empty as faint outlines) and pot in center. Layout stable (space reserved).
+- [DONE] LAYOUT MOBILE (<md): No oval. Community cards + pot on top, my cards + panel fixed at bottom, other players as compact 2-column list of small panels with name, stack, bet, status. No horizontal scroll at 380px.
+- [DONE] SEAT PANEL: Name ("(You)" for me), stack, current bet as chip pill, dealer button "D", SB/BB badges, status badges (folded, all-in, away, disconnected), turn highlight (yellow ring), "Auto-acted" badge when server marks auto_stood.
+- [DONE] TIMER: Countdown on active seat with progress ring + seconds, red at 5s or less. remaining = turn_deadline - (Date.now() + clockOffset). One setInterval at 250ms with cleanup, stopped when nobody on turn. At 0 do nothing on client; wait for state_changed, refetch once if nothing arrives within 2s.
+- [DONE] CENTER INFO: Street label (Preflop/Flop/Turn/River/Showdown), pot, blinds ("Blinds 2/5"), hand state text ("Waiting for {name}...").
+- [DONE] CONNECTION: Reuse banner ("Reconnecting...", "Back online").
+- [DONE] DEV PREVIEW: Temporary route /dev/poker-preview renders table from mock props: 2, 4, 6, 10 players; preflop, flop, river, showdown; folded and all-in players; long name; large stacks (5 digits). Screenshots taken at desktop width and 380px.
+
+### Tests
+- [DONE] tsc --noEmit passes
+- [DONE] Build passes
+
+### Next: Poker Frontend Part 3 - Action Bar
+- [TODO] Bet/raise modal with slider/input, min/max validation
+- [TODO] Action buttons (fold/check/call/bet/raise) wired to server
+- [TODO] Showdown reveal animation
+- [TODO] Finished panel with result/payout per player
+- [TODO] Rematch button in finished state
