@@ -82,7 +82,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
         clearTimeout(refetchTimeoutRef.current);
       }
     };
-  }, [game?.status, game?.turn_deadline, game?.turn_seconds, isMyTurn, getServerTime, refetch]);
+  }, [game?.status, game?.turn_deadline, game?.turn_seconds, game?.turn_seq, isMyTurn, getServerTime, refetch]);
 
   // Redirect if waiting
   useEffect(() => {

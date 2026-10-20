@@ -263,8 +263,12 @@ class PokerGame(BaseGame):
             self.state.current_player = self._get_next_active(bb_idx)
 
     def _set_first_to_act_postflop(self) -> None:
-        """Set first to act postflop: first active after button."""
-        self.state.current_player = self._get_next_active(self.button_pos)
+        """Set first to act postflop: button in heads-up, first active after button otherwise."""
+        n = len(self.state.players)
+        if n == 2:
+            self.state.current_player = self.button_pos % n
+        else:
+            self.state.current_player = self._get_next_active(self.button_pos)
 
     def get_valid_actions(self, player_id: int) -> list[str]:
         player = next((p for p in self.state.players if p["id"] == player_id), None)
@@ -408,8 +412,11 @@ class PokerGame(BaseGame):
             self.street = 1
             self.state.metadata["street"] = 1
             self._set_first_to_act_postflop()
-            # Postflop: last to act is button (or last active before button)
-            self.last_to_act = self.state.players[self.button_pos]["id"]
+            n = len(self.state.players)
+            if n == 2:
+                self.last_to_act = self.state.players[1 - self.button_pos]["id"]
+            else:
+                self.last_to_act = self.state.players[self.button_pos]["id"]
         elif self.state.phase == GamePhase.PLAYING:
             if len(self.state.community_cards) == 3:
                 # Turn - burn 1, deal 1
@@ -418,7 +425,11 @@ class PokerGame(BaseGame):
                 self.street = 2
                 self.state.metadata["street"] = 2
                 self._set_first_to_act_postflop()
-                self.last_to_act = self.state.players[self.button_pos]["id"]
+                n = len(self.state.players)
+                if n == 2:
+                    self.last_to_act = self.state.players[1 - self.button_pos]["id"]
+                else:
+                    self.last_to_act = self.state.players[self.button_pos]["id"]
             elif len(self.state.community_cards) == 4:
                 # River - burn 1, deal 1
                 self.deck.pop()  # burn
@@ -426,7 +437,11 @@ class PokerGame(BaseGame):
                 self.street = 3
                 self.state.metadata["street"] = 3
                 self._set_first_to_act_postflop()
-                self.last_to_act = self.state.players[self.button_pos]["id"]
+                n = len(self.state.players)
+                if n == 2:
+                    self.last_to_act = self.state.players[1 - self.button_pos]["id"]
+                else:
+                    self.last_to_act = self.state.players[self.button_pos]["id"]
             else:
                 # River betting complete -> showdown/finished
                 self.state.phase = GamePhase.FINISHED
@@ -546,9 +561,12 @@ class PokerGame(BaseGame):
     def to_json(self) -> str:
         import json
         data = self.state.to_dict()
-        # Store button and street in metadata for restoration
+        # Store button, street, and turn tracking in metadata for restoration
         data["metadata"]["button_pos"] = self.button_pos
         data["metadata"]["street"] = self.street
+        data["metadata"]["last_to_act"] = self.last_to_act
+        data["metadata"]["last_actor"] = self.last_actor
+        data["metadata"]["last_aggressor"] = self.last_aggressor
         return json.dumps(data)
 
     @classmethod
@@ -565,9 +583,11 @@ class PokerGame(BaseGame):
         known.update(game.state.community_cards)
         game.deck = [c for c in game.deck if c not in known]
         shuffle_deck(game.deck)
-        # Restore button and street
+        # Restore button, street, and turn tracking
         metadata = data.get("metadata", {})
         game.button_pos = metadata.get("button_pos", 0)
         game.street = metadata.get("street", 0)
-        game.last_aggressor = None  # Reset on restore
+        game.last_to_act = metadata.get("last_to_act", None)
+        game.last_actor = metadata.get("last_actor", None)
+        game.last_aggressor = metadata.get("last_aggressor", None)
         return game

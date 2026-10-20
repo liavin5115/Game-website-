@@ -453,3 +453,19 @@ Response (200): GameResponse with state visible to requesting player
 - All 19 poker tests pass
 - Backend process did NOT restart (no 'Shutting down' or 'Started reloader' in logs)
 
+
+## Bug Fix: Poker turn not advancing (DONE)
+
+### Root Cause
+1. last_to_act and last_actor were NOT serialized in to_json/from_json - after round-trip, last_to_act became None, causing _betting_round_complete to always return True, advancing street after every action
+2. _set_first_to_act_postflop always used _get_next_active(button) which skips button - wrong for heads-up where button acts first postflop
+3. last_to_act was set to button in heads-up postflop - should be non-button (last to act)
+4. Frontend myPlayer was always first player in game.players array, not the current user - isMyTurn was wrong for player 2
+
+### Fixes
+- Serialized last_to_act, last_actor, last_aggressor in to_json/from_json
+- _set_first_to_act_postflop handles heads-up (button acts first)
+- last_to_act set to non-button in heads-up postflop
+- Frontend myPlayer found by current user id from auth store
+- All 19 poker tests pass, repro script shows correct turn alternation
+

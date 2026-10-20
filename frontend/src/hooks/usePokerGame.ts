@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useGameSocket } from './useGameSocket';
 import { gamesApi, lobbyApi } from '../api/client';
 import { Game, LobbyGame } from '../types';
+import { useAuthStore } from '../stores/authStore';
 
 interface UsePokerGameOptions {
   gameId: number | null;
@@ -58,10 +59,11 @@ export function usePokerGame({ gameId, enabled = true }: UsePokerGameOptions) {
     mutationFn: () => gamesApi.start({ game_id: gameId! }).then(r => r.data as Game),
   });
 
-  // Helpers
-  const myPlayer = game?.players?.find(p => p.id === game?.state?.players?.find(sp => sp.id === p.id)?.id);
-  const myStatePlayer = game?.state?.players?.find(p => p.id === myPlayer?.id);
-  const isMyTurn = game?.current_turn_user_id === myPlayer?.id;
+  // Helpers - find my player by current user's id
+  const currentUser = useAuthStore.getState().user;
+  const myPlayer = game?.players?.find(p => p.id === currentUser?.id);
+  const myStatePlayer = game?.state?.players?.find(p => p.id === currentUser?.id);
+  const isMyTurn = game?.current_turn_user_id === currentUser?.id;
   const validActions = game?.my_valid_actions || [];
 
   return {
