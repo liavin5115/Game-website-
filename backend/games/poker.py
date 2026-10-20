@@ -3,6 +3,7 @@ import random
 from typing import Optional
 from games.base import BaseGame, GameAction, GameState, GamePhase
 
+_rng = random.SystemRandom()
 
 # Card utilities
 RANKS = "23456789TJQKA"
@@ -12,6 +13,11 @@ RANK_VALUE = {r: i for i, r in enumerate(RANKS, 2)}
 
 def create_deck() -> list[str]:
     return [r + s for r in RANKS for s in SUITS]
+
+
+def shuffle_deck(deck: list[str]) -> None:
+    """Shuffle deck in place using cryptographic RNG."""
+    _rng.shuffle(deck)
 
 
 def evaluate_hand(cards: list[str]) -> tuple[int, list[int]]:
@@ -132,7 +138,7 @@ class PokerGame(BaseGame):
 
     def start_game(self) -> None:
         """Deal cards and begin betting"""
-        random.shuffle(self.deck)
+        shuffle_deck(self.deck)
 
         # Deal 2 cards to each player
         for i, player in enumerate(self.players):
@@ -296,7 +302,6 @@ class PokerGame(BaseGame):
     def to_json(self) -> str:
         import json
         data = self.state.to_dict()
-        data["deck_count"] = len(self.deck)
         return json.dumps(data)
 
     @classmethod
@@ -312,4 +317,5 @@ class PokerGame(BaseGame):
             known.update(p["cards"])
         known.update(game.state.community_cards)
         game.deck = [c for c in game.deck if c not in known]
+        shuffle_deck(game.deck)
         return game

@@ -113,3 +113,9 @@
   - [DONE] Frontend: Connection banner, disconnected badges, disabled buttons
   - [DONE] Frontend: Resume on login/load with active game redirect/banner
   - [DONE] Frontend: tsc --noEmit and build pass
+
+## Poker Group A - Step 1: Deck & RNG (DONE)
+- [DONE] Use SystemRandom for cryptographic RNG
+- [DONE] Shuffle once at hand start, keep deck server-side only
+- [DONE] Never serialize deck or burn cards to client (removed deck_count from to_json)
+- [DONE] from_json rebuilds deck and reshuffles (not sorted order)
