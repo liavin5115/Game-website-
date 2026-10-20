@@ -28,18 +28,25 @@ class GameManager:
             game.turn_deadline = None
             return
 
-        # Dealer's turn has no timer
+        # Dealer's turn has no timer - check for active players (poker uses "active", blackjack uses "playing")
         state_dict = game_instance.state.to_dict()
         current_player_idx = state_dict.get("current_player", 0)
         players = state_dict.get("players", [])
         if current_player_idx < len(players):
             current_player = players[current_player_idx]
-            if current_player.get("status") != "playing":
+            player_status = current_player.get("status", "")
+            if player_status not in ("playing", "active"):
                 game.turn_deadline = None
                 return
 
+        # Use poker-specific timer for poker games
+        if game.game_type == GameType.POKER:
+            turn_seconds = self.settings.POKER_TURN_SECONDS
+        else:
+            turn_seconds = self.settings.TURN_SECONDS
+
         game.turn_deadline = self._now_utc().replace(tzinfo=None) + \
-            __import__('datetime').timedelta(seconds=self.settings.TURN_SECONDS)
+            __import__('datetime').timedelta(seconds=turn_seconds)
 
         if advance_seq:
             metadata = state_dict.get("metadata", {})
@@ -49,14 +56,14 @@ class GameManager:
             game_instance.state = game_instance.state.from_dict(state_dict)
 
     def _check_and_apply_timeout(self, game: Game, game_instance) -> bool:
-        """Check if turn_deadline expired and apply auto-stand. Returns True if timeout applied."""
+        """Check if turn_deadline expired and apply auto-action. Returns True if timeout applied."""
         if not game.turn_deadline or game.status != GameStatus.IN_PROGRESS:
             return False
 
         if self._now_utc().replace(tzinfo=None) < game.turn_deadline:
             return False
 
-        # Timeout - apply auto-stand for current player
+        # Timeout - apply auto-action for current player
         state_dict = game_instance.state.to_dict()
         current_player_idx = state_dict.get("current_player", 0)
         players = state_dict.get("players", [])
@@ -64,7 +71,8 @@ class GameManager:
             return False
 
         current_player = players[current_player_idx]
-        if current_player.get("status") != "playing":
+        player_status = current_player.get("status", "")
+        if player_status not in ("playing", "active"):
             return False
 
         player_id = current_player["id"]
@@ -77,14 +85,24 @@ class GameManager:
             metadata["timeout_strikes"] = {}
         metadata["timeout_strikes"][str(player_id)] = strikes
 
-        # Mark auto_stood and away if max strikes reached
+        # Mark auto action and away if max strikes reached
         current_player["auto_stood"] = True
         if strikes >= self.settings.TURN_TIMEOUT_MAX_STRIKES:
             current_player["status"] = "away"
 
-        # Apply stand action (same code path)
-        action = GameAction(type="stand", amount=0)
-        game_instance.apply_action(player_id, action)
+        # Apply timeout action: poker = check if allowed else fold; blackjack = stand
+        if game.game_type == GameType.POKER:
+            action = GameAction(type="check", amount=0)
+            try:
+                game_instance.apply_action(player_id, action)
+            except ValueError:
+                # Check not allowed (facing bet) -> fold
+                action = GameAction(type="fold", amount=0)
+                game_instance.apply_action(player_id, action)
+        else:
+            # Blackjack: auto-stand
+            action = GameAction(type="stand", amount=0)
+            game_instance.apply_action(player_id, action)
 
         # Update state with strikes and auto_stood
         new_state_dict = game_instance.state.to_dict()
@@ -111,6 +129,10 @@ class GameManager:
             buy_in = metadata["default_buy_in"]
         if buy_in <= 0:
             raise ValueError("Buy-in must be positive")
+
+        # Poker minimum buy-in
+        if game_type == "poker" and buy_in < 40:
+            raise ValueError("Poker minimum buy-in is 40")
 
         # Check creator can afford
         if not self.wallet.can_afford(creator_id, buy_in):
@@ -180,6 +202,10 @@ class GameManager:
         # Check buy-in
         if not self.wallet.can_afford(user_id, game.buy_in):
             raise ValueError("Insufficient points for buy-in")
+
+        # Poker minimum buy-in
+        if game.game_type == GameType.POKER and game.buy_in < 40:
+            raise ValueError("Poker minimum buy-in is 40")
 
         # Deduct buy-in with game reference
         self.wallet.deduct_points(
@@ -335,8 +361,9 @@ class GameManager:
         game.status = GameStatus.FINISHED
         game.finished_at = now
         game.turn_deadline = None
-        game.pot = game_instance.state.pot
         game.state = game_instance.to_json()
+        # Pot is distributed to players, so reset to 0
+        game.pot = 0
 
         winner_id = game_instance.get_winner()
         if winner_id:
@@ -394,13 +421,26 @@ class GameManager:
                         user.total_wins += 1
 
         elif game.game_type == GameType.POKER:
-            for player_id, payout in payouts.items():
+            # Poker: each player gets remaining chips + pot share
+            # Determine result per player: win (net > 0), loss (net < 0), push (net == 0)
+            for player_state in game_instance.state.players:
+                player_id = player_state["id"]
+                payout = payouts.get(player_id, 0)
+                buy_in = player_state.get("chips", 0) + player_state.get("total_bet", 0)
+                # Net = payout - buy_in (but buy_in was already debited at join)
+                # So we compare payout to original buy_in
                 session = self.db.query(GameSession).filter(
                     and_(GameSession.game_id == game.id, GameSession.user_id == player_id)
                 ).first()
                 if session:
                     session.payout = payout
-                    session.result = "win" if payout > 0 else "loss"
+                    net = payout - session.buy_in
+                    if net > 0:
+                        session.result = "win"
+                    elif net < 0:
+                        session.result = "loss"
+                    else:
+                        session.result = "push"
                     session.left_at = now
 
                 if payout > 0:
@@ -408,7 +448,7 @@ class GameManager:
                         player_id,
                         payout,
                         TransactionType.GAME_WIN,
-                        f"Won poker game",
+                        f"Poker settlement",
                         game.id,
                         commit=False
                     )
@@ -416,7 +456,7 @@ class GameManager:
                 user = self.db.query(User).filter(User.id == player_id).first()
                 if user:
                     user.total_games += 1
-                    if payout > 0:
+                    if payout > session.buy_in:
                         user.total_wins += 1
 
     def get_game(self, game_id: int, user_id: Optional[int] = None) -> Optional[Game]:

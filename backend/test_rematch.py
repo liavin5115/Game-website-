@@ -1,10 +1,12 @@
 """Test rematch functionality - comprehensive"""
+import pytest
 from database import SessionLocal, init_db
 from models import User, Game, GameSession, GameStatus, GameType, TransactionType
 from services.game_manager import GameManager
 from services.wallet import WalletService
 import asyncio
 
+@pytest.mark.asyncio
 async def test_rematch():
     db = SessionLocal()
     try:

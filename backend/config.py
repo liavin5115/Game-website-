@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     # Turn Timer
     TURN_SECONDS: int = 30
+    POKER_TURN_SECONDS: int = 30
     TURN_TIMEOUT_MAX_STRIKES: int = 2
 
     # Reconnect / Presence

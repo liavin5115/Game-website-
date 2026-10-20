@@ -3,6 +3,7 @@ import random
 import itertools
 from typing import Optional
 from games.base import BaseGame, GameAction, GameState, GamePhase
+from config import get_settings
 
 _rng = random.SystemRandom()
 
@@ -10,6 +11,10 @@ _rng = random.SystemRandom()
 RANKS = "23456789TJQKA"
 SUITS = "cdhs"  # clubs, diamonds, hearts, spades
 RANK_VALUE = {r: i for i, r in enumerate(RANKS, 2)}
+
+# Poker constants
+MIN_BUY_IN = 40
+BLIND_DIVISOR = 20  # BB = buy_in // 20
 
 
 def create_deck() -> list[str]:
@@ -19,6 +24,13 @@ def create_deck() -> list[str]:
 def shuffle_deck(deck: list[str]) -> None:
     """Shuffle deck in place using cryptographic RNG."""
     _rng.shuffle(deck)
+
+
+def calculate_blinds(buy_in: int) -> tuple[int, int]:
+    """Calculate (SB, BB) from buy_in. BB = buy_in // 20, SB = BB // 2, minimum 1."""
+    bb = max(buy_in // BLIND_DIVISOR, 1)
+    sb = max(bb // 2, 1)
+    return sb, bb
 
 
 def evaluate_hand(cards: list[str]) -> tuple[int, list[int]]:
@@ -134,6 +146,9 @@ class PokerGame(BaseGame):
     def _init_game(self) -> None:
         self.deck = create_deck()
 
+        sb_amount, bb_amount = calculate_blinds(self.buy_in)
+        min_raise = bb_amount  # Min raise = BB
+
         self.state.players = [
             {"id": p["id"], "username": p["username"], "chips": p["chips"],
              "cards": [], "bet": 0, "total_bet": 0, "status": "active"}
@@ -142,15 +157,15 @@ class PokerGame(BaseGame):
         self.state.phase = GamePhase.WAITING
         self.state.pot = 0
         self.state.current_bet = 0
-        self.state.min_raise = self.buy_in // 10 or 10
+        self.state.min_raise = min_raise
         self.state.current_player = 0
         self.state.community_cards = []
         # Store button position and street in metadata
         self.state.metadata = {
             "button_pos": 0,
             "street": 0,
-            "sb_amount": self.buy_in // 20 or 5,
-            "bb_amount": self.buy_in // 10 or 10,
+            "sb_amount": sb_amount,
+            "bb_amount": bb_amount,
         }
 
     def start_game(self) -> None:
@@ -465,7 +480,10 @@ class PokerGame(BaseGame):
         return winners[0] if winners else None
 
     def get_payouts(self) -> dict[int, int]:
-        """Calculate payouts with single pot, split among winners, odd chip to first winner."""
+        """Calculate payouts with single pot, split among winners, odd chip to first winner.
+        Each player gets: remaining chips (unbet) + share of pot.
+        Folded players' chips stay in pot (already in total_bet).
+        """
         winners = self.get_winners()
         payouts = {p["id"]: 0 for p in self.state.players}
 
@@ -473,11 +491,12 @@ class PokerGame(BaseGame):
             return payouts
 
         # Assert equal contributions for all non-folded players at showdown
+        # Only enforce if we're past preflop (street > 0) since blinds create
+        # natural inequality that gets resolved in the first betting round.
         active = [p for p in self.state.players if p["status"] == "active"]
-        if len(active) > 1:
+        if len(active) > 1 and self.street > 0:
             contributions = [p["total_bet"] for p in active]
             if len(set(contributions)) > 1:
-                # Log and fail loudly - this should not happen with equal buy-ins
                 import logging
                 logging.error(f"UNEQUAL CONTRIBUTIONS at showdown: {[(p['id'], p['total_bet']) for p in active]}")
                 raise ValueError(f"Unequal contributions at showdown: {contributions}")
@@ -486,8 +505,13 @@ class PokerGame(BaseGame):
         split = pot // len(winners)
         odd_chip = pot % len(winners)
 
-        for i, w_id in enumerate(winners):
-            payouts[w_id] = split + (1 if i < odd_chip else 0)
+        # Each player gets their remaining chips back + pot share if winner
+        for player in self.state.players:
+            pid = player["id"]
+            payouts[pid] = player["chips"]  # Refund unbet chips
+            if pid in winners:
+                idx = winners.index(pid)
+                payouts[pid] += split + (1 if idx < odd_chip else 0)
 
         return payouts
 

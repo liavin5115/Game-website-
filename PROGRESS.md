@@ -144,3 +144,36 @@
 - [DONE] 10-seat logic: button rotation, first-to-act, deck never runs out (24 cards remaining)
 - [DONE] from_json restores button position and street
 - [DONE] Rule violations return 400/409 via ValueError
+
+## Poker Group B - Step 1: Settlement (DONE)
+- [DONE] Buy-in debit, pot accounting, payouts and refunds in ONE DB transaction with row lock
+- [DONE] Transaction rows with balance_after and game_id for all money movements
+- [DONE] Status FINISHED set in same transaction
+- [DONE] Settled guard (double-finish returns early, pays nothing)
+- [DONE] Full rollback on any error
+- [DONE] Single pot (no side pots per MVP), odd-chip rule to first winner
+- [DONE] Config: POKER_TURN_SECONDS=30 per game type
+- [DONE] Blind formula: BB = buy_in // 20, SB = BB // 2, minimum 1; min buy-in 40
+
+## Poker Group B - Step 2: Conservation (DONE)
+- [DONE] Total points before game = total points after (verified via test_poker_settlement_conservation)
+- [DONE] Pot reset to 0 after settlement
+- [DONE] All transactions carry reference_id and balance_after
+
+## Poker Group B - Step 3: Leave Rules (DONE)
+- [DONE] Leave only while WAITING, exact refund with pot recalculated
+- [DONE] Host transfer or cancel on last leave
+- [DONE] Mid-hand disconnect: timer decides (check if allowed, else fold)
+- [DONE] Away players (2+ strikes): auto check/fold instantly
+- [DONE] All disconnected > ABANDON_SECONDS (120s): check/fold through to showdown, settle once
+- [DONE] No mid-hand join or rebuy; joining only while WAITING
+
+## Poker Group B - Step 4: Game Structure (DONE)
+- [DONE] One hand per Game row (existing)
+- [DONE] Leftover chips return to points (refund unbet chips in settlement)
+- [DONE] Game ends when hand finishes
+
+## Poker Group B - Step 5: Rematch & Wallet Stats (DONE)
+- [DONE] Rematch works for poker (generic, same as blackjack)
+- [DONE] Wallet stats for poker: net per game from TX, games_played, wins, losses, pushes (split pot = push when net=0)
+- [DONE] Tests: test_poker.py covers all Group B requirements (11 tests passing)
