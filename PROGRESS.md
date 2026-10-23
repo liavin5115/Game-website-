@@ -663,3 +663,33 @@ Visual-only fix for the desktop (>=768px) oval table; no game logic or backend c
 - Checked in a real browser by staging same-origin iframes at exactly 1366x768 and 1024x768 and running `__pokerOverlapCheck()` inside each: **zero violations** for 2, 6 and 10 players at preflop / flop / turn / river / reveal / result, at both sizes. Every seat was also shown as "me" from a second window (two users), zero violations.
 - Observed states: reveal banner + `Pot: <total>` kept (7/10/30/50), then `Hand complete` + `Pot: 0` at the result panel; the banner and "Hand complete" never appear together.
 - Screenshots captured for 10 players at 1366 (preflop, reveal) and 1024 (result).
+## Desktop poker seat timer fix (2026-10-23)
+
+Visual-only fix for the countdown timer overlapping the D/SB/BB badge row on desktop (>=768px). No game logic changes.
+
+**Changes:**
+- Timer moved out of the badge row into its own reserved slot:
+  * Thin full-width progress bar along the bottom edge of the seat panel (inside the yellow turn frame)
+  * Seconds as small text at the right end of the "Your Turn" status line
+  * Slot reserved even when nobody's turn (hidden but taking space) so nothing shifts
+  * Colour buckets: green >10s, amber 10-5s, red <5s with soft pulse (respects prefers-reduced-motion)
+  * Seconds always shown as text (not colour-only signal)
+- My seat slightly larger than opponents' (md cards instead of sm, panel min-width ~150px) while keeping >=16px safe-zone gap to the center column and action bar
+- Badge row (D, SB, BB) keeps one fixed slot per seat, holds up to 3 badges without wrapping or touching anything
+
+**Files:**
+- rontend/src/components/games/poker/PokerTableDisplay.tsx: new SEAT_METRICS (me 152x183 md, opp 118x148 sm), PlayerSeat rebuilt with per-row fixed heights, timer bar + seconds in status row
+- rontend/src/lib/pokerTableLayout.ts: per-seat sizing (mySeatW/mySeatH, imMargin), equal-arc spacing still holds
+- rontend/src/lib/pokerOverlapCheck.ts: owner-aware pairs (same-seat gap>=0, cross-seat >=16px), added timer/cards/stack selectors
+- rontend/src/lib/pokerTableLayout.test.ts: updated with real seat geometry, 7 tests pass
+
+**Verification:**
+- 
+px tsc --noEmit -> OK
+- 
+pm run build -> OK
+- 
+px vitest run -> 23 passed (4 test files)
+- window.__pokerOverlapCheck() -> 0 violations (checked at finished state, badge row + timer + cards + stack + center + actionbar all clear)
+
+@
