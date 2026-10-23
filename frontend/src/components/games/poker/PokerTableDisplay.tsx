@@ -1,15 +1,23 @@
 /** Presentational poker table component - takes all data as props */
-import { useMemo } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Card } from './Card';
 import { Button } from '../../common/Button';
 import { Modal } from '../../common/Modal';
 import { Input } from '../../common/Input';
 import { chipColors } from '../../../design/tokens';
 import { formatNet, formatPoints } from '../../../lib/format';
-import { seatPositionsBySeat } from '../../../lib/pokerSeat';
+import { computeTableLayout } from '../../../lib/pokerTableLayout';
+import { checkPokerOverlaps } from '../../../lib/pokerOverlapCheck';
 import type { PokerResult } from '../../../types';
 
 const STREET_LABELS = ['Preflop', 'Flop', 'Turn', 'River', 'Showdown'];
+const STREET_PILL_LABELS = [
+  'Preflop',
+  'Flop - 3rd street',
+  'Turn - 4th street',
+  'River - 5th street',
+  'Showdown',
+];
 
 const STATUS_BADGE_STYLES: Record<string, string> = {
   folded: 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400',
@@ -19,7 +27,15 @@ const STATUS_BADGE_STYLES: Record<string, string> = {
   auto_acted: 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300',
 };
 
-const CARD_SIZE_MD = { width: '56px', height: '78px' };
+// Reserved center column sizing (px). The DOM below reuses these exact numbers,
+// so the safe-zone math and the rendered boxes always agree.
+const ZONE_W = 352; // 5 x 64px cards + 4 x 8px gaps
+const ZONE_H = 178; // cards 90 + street 22 + pot 20 + message 28 + 3 x 6 gaps
+const SEAT_GAP = 16;
+const DESKTOP_SEAT = {
+  normal: { w: 128, h: 140 },
+  compact: { w: 112, h: 128 },
+} as const;
 
 function getChipColor(amount: number) {
   if (amount >= 1000) return chipColors.orange;
@@ -144,6 +160,7 @@ function PlayerSeat({
   turnSeconds,
   isLowTime,
   compact = false,
+  fixedSize = false,
 }: {
   player: any;
   isMe: boolean;
@@ -167,27 +184,40 @@ function PlayerSeat({
   turnSeconds?: number;
   isLowTime?: boolean;
   compact?: boolean;
+  /** Desktop: lock the seat to a fixed box so placement math is exact. */
+  fixedSize?: boolean;
 }) {
   const showCards = isMe || status === 'showdown' || isShowdown;
   const isFolded = status === 'folded';
   const isAllIn = status === 'allin' || status === 'all_in';
   const isAway = status === 'away';
-  const cardSize = compact ? 'xs' : 'sm';
+  const cardSize = compact || fixedSize ? 'xs' : 'sm';
   const showNet = revealActive && (revealRemaining <= 2 || !showdown) && result;
   const dimmed = revealActive && !isWinner;
 
   return (
     <div
-      className={`flex flex-col items-center transition-all duration-200 ${
-        compact ? 'min-w-[112px] gap-1' : 'min-w-[140px] gap-1.5'
+      className={`flex flex-col items-center rounded-xl transition-[opacity,box-shadow] duration-200 ${
+        fixedSize
+          ? compact
+            ? 'w-[112px] h-[128px] justify-center gap-[2px] px-1'
+            : 'w-[128px] h-[140px] justify-center gap-[3px] px-1'
+          : compact
+            ? 'min-w-[112px] gap-1'
+            : 'min-w-[140px] gap-1.5'
       } ${
-        isCurrentTurn && !isFinished ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900' : ''
-      } ${isWinner && revealActive ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900 rounded-xl' : ''} ${
+        isCurrentTurn && !isFinished ? 'shadow-[0_0_0_2px_rgba(250,204,21,0.95)]' : ''
+      } ${isWinner && revealActive ? 'shadow-[0_0_0_3px_rgba(74,222,128,0.95)]' : ''} ${
         dimmed ? 'opacity-40' : ''
       }`}
     >
       {/* Top badges row: fixed slot so the timer never shifts the name */}
-      <div className={`flex items-center gap-0.5 w-full justify-center ${compact ? 'h-6' : 'min-h-[32px] gap-1'}`}>
+      <div
+        data-pk-badges
+        className={`flex flex-nowrap items-center gap-0.5 w-full justify-center overflow-hidden ${
+          fixedSize ? (compact ? 'h-5 shrink-0' : 'h-6 shrink-0') : compact ? 'h-6' : 'min-h-[32px] gap-1'
+        }`}
+      >
         {isDealer && (
           <Badge compact={compact} className="bg-white text-gray-900 border border-gray-300 dark:bg-gray-800 dark:text-white dark:border-gray-600" title="Dealer">
             D
@@ -219,7 +249,7 @@ function PlayerSeat({
       </div>
 
       {/* Cards */}
-      <div className={`flex gap-0.5 items-end ${compact ? 'min-h-[40px]' : 'min-h-[56px]'}`}>
+      <div className={`flex gap-0.5 items-center justify-center ${fixedSize ? 'h-10 shrink-0' : compact ? 'min-h-[40px]' : 'min-h-[56px]'}`}>
         {isFolded && !isShowdown ? (
           <div className="flex gap-0.5 opacity-40">
             <Card card="??" faceDown size={cardSize} />
@@ -247,43 +277,62 @@ function PlayerSeat({
       {/* Stack and current bet on one line: no separate pill to overlap or
           add height. The bet stays visible as a secondary value. After the
           hand is settled the stack is what the player actually received. */}
-      <div className={`num flex items-baseline gap-1 font-semibold text-gray-900 dark:text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
+      <div className={`num flex items-baseline gap-1 font-semibold text-gray-900 dark:text-white ${fixedSize ? (compact ? 'h-4 shrink-0 text-[11px]' : 'h-[14px] shrink-0 text-xs') : compact ? 'text-[11px]' : 'text-xs'}`}>
         <span>{formatPoints(isFinished && result ? result.payout : player.chips)}</span>
         {player.bet > 0 && (
           <span className="text-yellow-600 dark:text-yellow-400 font-normal">Â· {formatPoints(player.bet)}</span>
         )}
       </div>
 
-      {isFinished && showdown && (result?.hand_description || result?.hand_name) && (
-        <span className={`text-center font-medium text-green-700 dark:text-green-300 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
-          {result.hand_description || result.hand_name}
-        </span>
-      )}
-
-      {showNet && (
-        <span
-          className={`num rounded-full px-2 py-0.5 text-[11px] font-bold ${
-            Number(result?.net) > 0
-              ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
-              : Number(result?.net) < 0
-                ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
-                : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+      {/* Hand name: its own reserved line so the seat height never changes. */}
+      {fixedSize || (isFinished && showdown && (result?.hand_description || result?.hand_name)) ? (
+        <div
+          className={`flex w-full items-center justify-center overflow-hidden text-center font-medium text-green-700 dark:text-green-300 ${
+            fixedSize
+              ? compact
+                ? 'h-[12px] shrink-0 text-[9px]'
+                : 'h-[14px] shrink-0 text-[10px]'
+              : compact
+                ? 'text-[9px]'
+                : 'text-[10px]'
           }`}
         >
-          {formatNet(result?.net)}
-        </span>
-      )}
+          <span className="truncate">
+            {isFinished && showdown ? result?.hand_description || result?.hand_name : ''}
+          </span>
+        </div>
+      ) : null}
 
-      {/* Status badges: at most one secondary status in compact mode so the
-          row never wraps and grows into the seat below. */}
-      <div className="flex flex-wrap items-center justify-center gap-0.5">
-        {isFolded && <Badge compact={compact} className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
-        {isAllIn && <Badge compact={compact} className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
-        {!connected && !isMe && <Badge compact={compact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
-        {isAway && (connected || !compact) && <Badge compact={compact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
-        {autoActed && !isAway && <Badge compact={compact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
-        {isCurrentTurn && !isFinished && !isFolded && !isAllIn && !isAway && (
-          <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
+      {/* One reserved status slot: net badge during the reveal, otherwise the
+          folded/all-in/turn badges. Nothing else can push this row around. */}
+      <div
+        className={`flex flex-nowrap items-center justify-center gap-0.5 overflow-hidden ${
+          fixedSize ? (compact ? 'h-[14px] shrink-0' : 'h-[16px] shrink-0') : ''
+        }`}
+      >
+        {showNet ? (
+          <span
+            className={`num rounded-full px-2 py-0.5 text-[11px] font-bold ${
+              Number(result?.net) > 0
+                ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+                : Number(result?.net) < 0
+                  ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                  : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+            }`}
+          >
+            {formatNet(result?.net)}
+          </span>
+        ) : (
+          <>
+            {isFolded && <Badge compact={compact} className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
+            {isAllIn && <Badge compact={compact} className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
+            {!connected && !isMe && <Badge compact={compact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
+            {isAway && (connected || !compact) && <Badge compact={compact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
+            {autoActed && !isAway && <Badge compact={compact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
+            {isCurrentTurn && !isFinished && !isFolded && !isAllIn && !isAway && (
+              <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
+            )}
+          </>
         )}
       </div>
     </div>
@@ -295,14 +344,16 @@ function CommunityCards({
   street,
   highlightCards = [],
   dimNonWinning = false,
+  showLabel = false,
 }: {
   cards: string[];
   street: number;
   highlightCards?: string[];
   dimNonWinning?: boolean;
+  showLabel?: boolean;
 }) {
   return (
-    <div className="flex justify-center gap-2 flex-wrap">
+    <div className="flex justify-center gap-2">
       {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className="relative">
           {i < cards.length ? (
@@ -319,17 +370,27 @@ function CommunityCards({
             />
           ) : (
             <div
-              className={`${CARD_SIZE_MD.width} ${CARD_SIZE_MD.height} rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700`}
+              className="w-16 rounded-lg border-2 border-dashed border-gray-300/70 dark:border-gray-600/70 bg-gradient-to-br from-gray-50/50 to-gray-100/50 dark:from-gray-800/50 dark:to-gray-700/50"
               style={{ aspectRatio: '5/7' }}
               aria-label={`Community card slot ${i + 1}`}
             />
           )}
         </div>
       ))}
-      <div className="w-full text-center mt-2 text-sm text-gray-500 dark:text-gray-400">
-        {STREET_LABELS[street] || `Street ${street}`}
-      </div>
+      {showLabel && (
+        <div className="w-full text-center mt-2 text-sm text-gray-500 dark:text-gray-400">
+          {STREET_LABELS[street] || `Street ${street}`}
+        </div>
+      )}
     </div>
+  );
+}
+
+function StreetPill({ label }: { label: string }) {
+  return (
+    <span className="rounded-full border border-white/25 bg-black/35 px-3 py-[2px] text-[11px] font-semibold uppercase tracking-wider text-white/90 shadow-sm">
+      {label}
+    </span>
   );
 }
 
@@ -980,19 +1041,100 @@ export function PokerTableDisplay({
   onBackToLobby,
   rematchLoading,
 }: PokerTableDisplayProps) {
-  // Positions indexed by absolute seat. relativeIndex 0 (me, or seat 0 for a
-  // watcher) is bottom center; the rest run clockwise. The math lives in
-  // lib/pokerSeat.ts so it is unit-tested for n = 2, 3, 6 and 10.
-  const seatPositions = useMemo(
-    () => seatPositionsBySeat(numPlayers, mySeat),
-    [numPlayers, mySeat],
-  );
+  const tableRef = useRef<HTMLDivElement>(null);
+  const [tableSize, setTableSize] = useState({ w: 0, h: 0 });
+
+  // Measure the table so seats can be placed in pixels against the real box.
+  useLayoutEffect(() => {
+    const el = tableRef.current;
+    if (!el) return;
+    const measure = () =>
+      setTableSize((s) =>
+        s.w === el.clientWidth && s.h === el.clientHeight ? s : { w: el.clientWidth, h: el.clientHeight },
+      );
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Dev-only geometry checker, callable from the console as
+  // window.__pokerOverlapCheck() during manual verification.
+  useEffect(() => {
+    const isDev = (import.meta as unknown as { env?: { DEV?: boolean } }).env?.DEV;
+    if (!isDev) return;
+    (window as unknown as Record<string, unknown>).__pokerOverlapCheck = () =>
+      checkPokerOverlaps(tableRef.current);
+    return () => {
+      delete (window as unknown as Record<string, unknown>).__pokerOverlapCheck;
+    };
+  }, []);
 
   const pot = gameState?.pot ?? 0;
   const isFinished = game?.status === 'finished';
-  // After settlement the pot has been paid out, so the center shows 0. The
-  // settled total is still available (potTotal) for the result panel.
-  const centerPot = isFinished ? 0 : pot;
+  // Keep the settled pot visible through the reveal; only clear it when the
+  // result panel actually shows (the pot has been paid to the winner).
+  const centerPot = isFinished ? (showResult ? 0 : potTotal) : pot;
+
+  const compactDesktop = numPlayers >= 6;
+  const seatBox = compactDesktop ? DESKTOP_SEAT.compact : DESKTOP_SEAT.normal;
+  const layout = useMemo(
+    () =>
+      computeTableLayout({
+        width: tableSize.w || 1152,
+        height: tableSize.h || 553,
+        n: numPlayers,
+        mySeat,
+        seatW: seatBox.w,
+        seatH: seatBox.h,
+        zoneW: ZONE_W,
+        zoneH: ZONE_H,
+        margin: SEAT_GAP,
+      }),
+    [tableSize.w, tableSize.h, numPlayers, mySeat, seatBox.w, seatBox.h],
+  );
+
+  const pillLabel = STREET_PILL_LABELS[street] || `Street ${street}`;
+  const turnActions = validActions
+    .map((a) => a.charAt(0).toUpperCase() + a.slice(1))
+    .join(', ');
+
+  // The message row shows exactly ONE message at a time. The reveal banner
+  // replaces the status text; "Hand complete" never stacks on top of it.
+  let message: React.ReactNode = null;
+  if (revealActive) {
+    message = showdown ? (
+      <div
+        aria-live="polite"
+        className="flex min-w-0 max-w-full items-center gap-2 whitespace-nowrap rounded-full border border-gold-500/50 bg-black/45 px-3 py-0.5 text-xs font-medium text-white shadow-lg"
+      >
+        <span className="truncate">Showing result in {Math.max(1, revealRemaining)}</span>
+        <button
+          type="button"
+          onClick={onSkipReveal}
+          className="shrink-0 rounded-full bg-gold-500 px-2 py-[1px] text-[11px] font-bold text-felt-950 hover:bg-gold-400"
+        >
+          Skip
+        </button>
+      </div>
+    ) : (
+      <span className="min-w-0 max-w-full truncate text-sm font-medium text-white/85">Hand complete</span>
+    );
+  } else if (isFinished) {
+    message = <span className="min-w-0 max-w-full truncate text-sm font-medium text-white/85">Hand complete</span>;
+  } else if (isMyTurn && validActions.length > 0) {
+    message = (
+      <span className="min-w-0 max-w-full truncate text-sm font-medium text-green-300">
+        Your turn - {turnActions}
+      </span>
+    );
+  } else if (currentTurnPlayerName) {
+    message = (
+      <span className="min-w-0 max-w-full truncate text-sm text-white/75">
+        Waiting for <span className="font-medium text-white">{currentTurnPlayerName}</span>...
+      </span>
+    );
+  }
   const resultsById = useMemo(() => {
     const map: Record<number, PokerResult> = {};
     for (const r of results || []) map[r.id] = r;
@@ -1020,7 +1162,11 @@ export function PokerTableDisplay({
 
       {/* Desktop: Oval Table Layout */}
       <div className="hidden md:block relative">
-        <div className={`w-full max-w-6xl mx-auto aspect-[3/2] relative ${numPlayers >= 6 ? 'min-h-[540px]' : 'min-h-[400px] max-h-[70vh]'}`}>
+        <div
+          ref={tableRef}
+          className="w-full max-w-6xl mx-auto relative"
+          style={{ height: 'min(72vh, 640px)', minHeight: 540 }}
+        >
           {/* Felt table background */}
           <div className="absolute inset-0 rounded-[50%] bg-gradient-to-br from-felt-700 via-felt-600 to-felt-800 border-4 border-felt-900 shadow-2xl overflow-hidden">
             <div className="absolute inset-0 opacity-5" style={{
@@ -1028,34 +1174,44 @@ export function PokerTableDisplay({
             }} />
           </div>
 
-          {/* Center area: community cards + pot + info */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center p-8 pointer-events-none">
-            <div className="pointer-events-auto z-10">
-              <CommunityCards
-                cards={gameState.community_cards || []}
-                street={street}
-                highlightCards={winningCards}
-                dimNonWinning={revealActive && showdown}
-              />
-              <CenterInfo
-                pot={centerPot}
-                sbAmount={sbAmount}
-                bbAmount={bbAmount}
-                currentTurnPlayerName={currentTurnPlayerName}
-                phase={game.status}
-                myValidActions={validActions}
-                isMyTurn={isMyTurn}
-                revealActive={revealActive}
-                revealRemaining={revealRemaining}
-                showdown={showdown}
-                onSkipReveal={onSkipReveal}
-              />
+          {/* Reserved center column: fixed order, fixed heights, one message. */}
+          <div
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-20 pointer-events-none"
+            style={{ width: ZONE_W }}
+          >
+            <div className="flex flex-col items-center gap-[6px]">
+              <div data-pk-cc className="flex items-center justify-center" style={{ height: 90 }}>
+                <CommunityCards
+                  cards={gameState.community_cards || []}
+                  street={street}
+                  highlightCards={winningCards}
+                  dimNonWinning={revealActive && showdown}
+                />
+              </div>
+              <div data-pk-street className="flex items-center justify-center" style={{ height: 22 }}>
+                <StreetPill label={pillLabel} />
+              </div>
+              <div
+                data-pk-pot
+                className="flex items-center justify-center gap-4 text-xs"
+                style={{ height: 20 }}
+              >
+                <span className="text-white/70">Blinds: {sbAmount}/{bbAmount}</span>
+                <span className="num font-bold text-yellow-300">Pot: {formatPoints(centerPot)}</span>
+              </div>
+              <div
+                data-pk-message
+                className="pointer-events-auto flex w-full items-center justify-center overflow-hidden px-1"
+                style={{ height: 28 }}
+              >
+                {message}
+              </div>
             </div>
           </div>
 
-          {/* Seats around ellipse */}
+          {/* Seats: pushed outside the reserved zone by computeTableLayout. */}
           {players.map((player, idx) => {
-            const pos = seatPositions[idx];
+            const pos = layout.seats[idx] || { x: 0, y: 0 };
             const isCurrent = idx === currentTurnIdx;
             const isDealer = idx === buttonPos;
             const isSB = idx === sbIdx;
@@ -1067,10 +1223,12 @@ export function PokerTableDisplay({
             return (
               <div
                 key={player.id}
+                data-pk-seat={idx}
                 className="absolute pointer-events-auto z-10"
                 style={{
-                  left: `${pos.x}%`,
-                  top: `${pos.y}%`,
+                  left: pos.x,
+                  top: pos.y,
+                  width: seatBox.w,
                   transform: 'translate(-50%, -50%)',
                 }}
               >
@@ -1096,7 +1254,8 @@ export function PokerTableDisplay({
                   remaining={remaining}
                   turnSeconds={turnSeconds}
                   isLowTime={isLowTime}
-                  compact={numPlayers >= 6}
+                  compact={compactDesktop}
+                  fixedSize
                 />
               </div>
             );
@@ -1113,6 +1272,7 @@ export function PokerTableDisplay({
             street={street}
             highlightCards={winningCards}
             dimNonWinning={revealActive && showdown}
+            showLabel
           />
           <CenterInfo
             pot={centerPot}
@@ -1233,11 +1393,11 @@ export function PokerTableDisplay({
         )}
       </div>
 
-      {/* Desktop Action Bar (fixed bottom while playing, inline when finished) */}
+      {/* Desktop Action Bar: inline right below the table so it can never
+          cover the bottom seat. */}
       <div
-        className={`md:block hidden max-w-6xl mx-auto z-20 ${
-          isFinished ? 'relative mt-4' : 'fixed bottom-0 left-0 right-0 px-4 pb-4'
-        }`}
+        data-pk-actionbar
+        className="md:block hidden relative max-w-6xl mx-auto mt-4 z-20"
       >
         <ActionBar
           validActions={validActions}
