@@ -52,6 +52,14 @@
   .font-mono {
     font-family: var(--font-mono);
   }
+
+  /* Numbers: plain zero (no slash/dot), tabular so columns line up.
+     DM Sans has a plain zero; JetBrains Mono's default zero is dotted. */
+  .num {
+    font-family: var(--font-ui);
+    font-variant-numeric: tabular-nums lining-nums;
+    font-feature-settings: 'tnum' 1, 'lnum' 1, 'zero' 0;
+  }
 }
 
 @layer components {

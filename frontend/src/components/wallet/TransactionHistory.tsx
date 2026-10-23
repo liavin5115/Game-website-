@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/authStore';
 import type { Transaction } from '../../types';
 import { Button } from '../common/Button';
 import { Modal } from '../common/Modal';
+import { formatNet, formatPoints } from '../../lib/format';
 
 const typeLabels: Record<string, string> = {
   deposit: 'Deposit',
@@ -121,19 +122,19 @@ export function TransactionHistory() {
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Total Won</p>
               <p className="text-2xl font-bold text-green-600 dark:text-green-400">
-                +{summary?.total_won?.toLocaleString() ?? 0}
+                {formatNet(summary?.total_won ?? 0)}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Total Lost</p>
               <p className="text-2xl font-bold text-red-600 dark:text-red-400">
-                -{summary?.total_lost?.toLocaleString() ?? 0}
+                {formatNet(-(summary?.total_lost ?? 0))}
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 dark:text-gray-400">Net</p>
               <p className={`text-2xl font-bold ${(summary?.net ?? 0) > 0 ? 'text-green-600 dark:text-green-400' : (summary?.net ?? 0) < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'}`}>
-                {(summary?.net ?? 0) > 0 ? '+' : ''}{summary?.net?.toLocaleString() ?? 0}
+                {formatNet(summary?.net ?? 0)}
               </p>
             </div>
           </div>
@@ -179,11 +180,11 @@ export function TransactionHistory() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className={`font-mono font-semibold ${tx.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
-                    {tx.amount > 0 ? '+' : ''}{tx.amount.toLocaleString()}
+                  <p className={`num font-semibold ${tx.amount > 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {formatNet(tx.amount)}
                   </p>
-                  <p className="text-sm text-gray-500 dark:text-gray-400 font-mono">
-                    Balance: {tx.balance_after.toLocaleString()}
+                  <p className="num text-sm text-gray-500 dark:text-gray-400">
+                    Balance: {formatPoints(tx.balance_after)}
                   </p>
                 </div>
               </div>

@@ -470,7 +470,7 @@ class GameManager:
                         user.total_wins += 1
 
         elif game.game_type == GameType.POKER:
-            from games.poker import evaluate_hand_best, hand_display_name
+            from games.poker import evaluate_hand_best, hand_display_name, hand_description
 
             # Poker: each player gets remaining chips + pot share.
             # Persist everything the result screen needs into the game state so
@@ -511,14 +511,16 @@ class GameManager:
                     result = "lost"
 
                 hand_name = None
+                hand_desc = None
                 best_five: list[str] = []
                 revealed_cards: list[str] = []
                 if showdown and player_state.get("status") == "active":
                     all_cards = list(player_state.get("cards") or []) + list(
                         game_instance.state.community_cards or []
                     )
-                    (rank, _tiebreakers), best_five = evaluate_hand_best(all_cards)
+                    (rank, tiebreakers), best_five = evaluate_hand_best(all_cards)
                     hand_name = hand_display_name(rank)
+                    hand_desc = hand_description(rank, tiebreakers)
                     revealed_cards = list(player_state.get("cards") or [])
                     if player_id in winners:
                         for card in best_five:
@@ -531,6 +533,7 @@ class GameManager:
                     "contribution": contribution,
                     "net": net,
                     "hand_name": hand_name,
+                    "hand_description": hand_desc,
                     "revealed_cards": revealed_cards,
                     "hand_cards": best_five,
                 })
@@ -560,6 +563,14 @@ class GameManager:
             # No one is on turn after the hand ends; the UI must not keep
             # showing a stale "Your Turn" highlight.
             game_instance.state.current_player = -1
+            # Settle the persisted engine state so the table shows FINAL stacks
+            # (the payout each player received) and an empty pot. The contested
+            # total stays available as metadata["pot_total"] for the result panel.
+            for player_state in game_instance.state.players:
+                player_state["chips"] = payouts.get(player_state["id"], 0)
+                player_state["bet"] = 0
+                player_state["total_bet"] = 0
+            game_instance.state.pot = 0
 
         game.state = game_instance.to_json()
 

@@ -15,7 +15,7 @@ from database import SessionLocal
 from main import app
 from models import Game, GameSession, GameStatus, Transaction
 from games.base import GamePhase
-from games.poker import PokerGame
+from games.poker import PokerGame, evaluate_hand_best, hand_description
 
 PASSWORD = "testpass123"
 
@@ -323,8 +323,22 @@ def test_showdown_results_match_wallet_and_conserve(client):
     for r in g["results"]:
         assert r["result"] in ("won", "lost", "split", "folded")
         assert r["hand_name"], r
+        assert r["hand_description"], r
         assert len(r["revealed_cards"]) == 2
         assert len(r["hand_cards"]) == 5
+
+    # After settlement the table must read FINAL stacks (the payout), not the
+    # pre-payout engine stack, and the center pot must be empty.
+    state_players = {p["id"]: p for p in g["state"]["players"]}
+    for r in g["results"]:
+        assert state_players[r["id"]]["chips"] == r["payout"], r
+        assert state_players[r["id"]]["total_bet"] == 0
+    # contribution must stay the amount put in (buy_in - final stack would now
+    # be negative because the persisted stack equals the payout).
+    assert sum(r["contribution"] for r in g["results"]) == g["pot_total"]
+    assert all(r["contribution"] < 100 for r in g["results"]), g["results"]
+    assert g["state"]["pot"] == 0
+    assert sum(p["chips"] for p in g["state"]["players"]) == 300
     # Getting the same hand as another player must not leak anything different.
     assert _get(client, users[1], gid)["results"] == g["results"]
 
@@ -396,3 +410,21 @@ def test_odd_chip_split_conserves_and_first_winner_gets_odd_chip():
     assert sum(payouts.values()) == 300
     assert sum(payouts[p["id"]] - 100 for p in game.state.players) == 0
     assert all(payouts[p["id"]] >= 0 for p in game.state.players)
+
+
+def test_hand_description_names_ranks():
+    """hand_description spells out the ranks, e.g. "Two Pair, Aces and Sevens"."""
+    cases = [
+        (["Ah", "Ad", "7c", "7d", "2s"], "Two Pair, Aces and Sevens"),
+        (["Kh", "Qh", "9h", "5h", "2h"], "Flush, King high"),
+        (["Ah", "Kh", "Qh", "Jh", "Th"], "Royal Flush"),
+        (["9s", "9h", "9d", "9c", "2s"], "Four of a Kind, Nines"),
+        (["Ks", "Kh", "Kd", "3c", "3s"], "Full House, Kings full of Threes"),
+        (["Ac", "Ad", "Ah", "Kc", "2s"], "Three of a Kind, Aces"),
+        (["Qs", "Qh", "8d", "7c", "2s"], "Pair, Queens"),
+        (["9c", "8d", "7h", "6s", "5c"], "Straight, Nine high"),
+        (["As", "Kd", "9h", "6c", "3s"], "High Card, Ace high"),
+    ]
+    for cards, expected in cases:
+        (rank, tiebreakers), _ = evaluate_hand_best(cards)
+        assert hand_description(rank, tiebreakers) == expected, cards

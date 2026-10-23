@@ -595,3 +595,37 @@ The server is the single source of truth for win/loss; the UI never computes pay
 - Fold (game 40): uncontested short reveal, no card reveal, panel net -2/+2 and pot 7; Skip dismissed it early.
 - Refresh reload mid-reveal resumed at 3 seconds (not a fresh 5); once the window elapsed the panel appeared immediately.
 - Play Again created a new waiting game as host with the 100 pt buy-in held.
+
+
+## Cleanup before the UI redesign (2026-10-23)
+
+Five small fixes, each with evidence kept and a test where the logic is non-trivial.
+
+### 1. Seat rotation
+- Bug: `PokerTable.tsx` hardcoded `mySeat = 0`, so both players rendered seat 0 at the bottom (a seat-1 player saw themselves on top).
+- Fix: `mySeat = game.players.find(p => p.id === myPlayer?.id)?.seat ?? 0` (a watcher falls back to seat 0).
+- Extracted `lib/pokerSeat.ts`: `relativeSeatIndex(seat, mySeat, n)` = `(seat - mySeat + n) % n`, plus `seatLayout(n)` / `seatPositionsBySeat(n, mySeat)`. `relativeIndex 0` is bottom center; the others run clockwise.
+- Test: `lib/pokerSeat.test.ts` for n = 2, 3, 6, 10 - each player in turn is "me" and lands at the bottom; watcher uses seat 0.
+
+### 2. Stacks after settlement
+- Evidence: finished game 6 returned `results` payouts 120/80 but `state.players[].chips` 80/80 and `state.pot` 40, while the seat reads `player.chips`.
+- Fix (backend): `_finish_game` settles the persisted state - `chips = payout`, `bet = 0`, `total_bet = 0`, `state.pot = 0`; the contested total stays as `metadata["pot_total"]` / top-level `pot_total`. `game_to_response` now prefers the persisted `contribution` (it only falls back to `buy_in - chips` for old games).
+- Fix (frontend): the seat stack shows `result.payout` once finished (covers old games too); the center pot shows 0 once finished.
+- Test: `test_poker_api.py` showdown asserts `state.players[].chips == payout`, `total_bet == 0`, `state.pot == 0`, sum of chips == total buy-ins, and sum of contributions == pot_total.
+
+### 3. One number format
+- `lib/format.ts` (`formatPoints`, fixed `en-US` commas; `formatNet` with an explicit +/-; missing -> "-" and warns once). Replaces `lib/pokerFormat.ts`.
+- Now used in the navbar (`Layout`), wallet (`BalanceDisplay`, `TransactionHistory`), the result panel, stacks, bets, pot and buttons.
+
+### 4. Plain zero
+- `.num` utility (`font-variant-numeric: tabular-nums lining-nums`, DM Sans, which has a plain zero) applied to numeric surfaces; JetBrains Mono's default zero is dotted, which is why "80" read like "88".
+
+### 5. Copy + rank-aware hand names
+- Result-panel header uses the magnitude: "You won 5 pts" / "You lost 5 pts" (no double sign).
+- Backend `hand_description(rank, tiebreakers)` (e.g. "Two Pair, Aces and Sevens", "Flush, King high"), persisted with the result and returned in `results[]` (old games derive it). The UI shows `hand_description || hand_name`.
+- Test: `test_hand_description_names_ranks` covers two pair, flush high, royal flush, quads, full house, trips, pair, straight, high card.
+
+### Verification
+- Frontend: `npx tsc --noEmit`, `npx vitest run` (16 passed) and `npm run build` all pass. There is no ESLint config in the repo, so tsc + build is the lint gate.
+- Backend: poker suite green; full `pytest -q` -> 36 passed, 5 failed + 1 error, the same pre-existing `test_fixes.py` / `test_websocket_client.py` (live-server / asyncio) failures as before.
+- Two windows, showdown hand (game 22): the seat-0 window shows itself at the bottom with "You lost 5 pts", stacks 95/105, "Pot: 0", "Pot total: 10", navbar "1,888 pts"; the seat-1 window shows itself at the bottom with "You won 5 pts", navbar "1,817 pts". Hand names read "Pair, Fives" and "Full House, Fours full of Fives".

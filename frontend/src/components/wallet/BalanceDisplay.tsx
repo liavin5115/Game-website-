@@ -2,6 +2,7 @@
 import { useAuthStore } from '../../stores/authStore';
 import { walletApi } from '../../api/client';
 import { useEffect } from 'react';
+import { formatPoints } from '../../lib/format';
 
 export function BalanceDisplay() {
   const { user, updatePoints } = useAuthStore();
@@ -15,8 +16,8 @@ export function BalanceDisplay() {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-gray-500 dark:text-gray-400">Your Balance</p>
-          <p className="text-3xl font-bold text-gray-900 dark:text-white">
-            {user?.points?.toLocaleString() || 0} pts
+          <p className="num text-3xl font-bold text-gray-900 dark:text-white">
+            {formatPoints(user?.points)} pts
           </p>
         </div>
         <div className="bg-blue-100 dark:bg-blue-900/30 p-3 rounded-lg">

@@ -248,7 +248,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
         pot_total = int(state_metadata.get("pot_total", pot_total) or 0)
         winning_cards = list(state_metadata.get("winning_cards") or [])
 
-        from games.poker import evaluate_hand_best, hand_display_name
+        from games.poker import evaluate_hand_best, hand_display_name, hand_description
 
         for s in sessions:
             if s.user_id not in user_map:
@@ -257,7 +257,12 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
             payout = int(s.payout or 0)
             buy_in = int(s.buy_in or 0)
             net = payout - buy_in
-            contribution = max(0, buy_in - int(p.get("chips", 0) or 0))
+            # New games persist the authoritative contribution. Only fall back
+            # to buy_in - chips for old games (whose state still holds the
+            # pre-settlement stack).
+            contribution = p.get("contribution")
+            if not isinstance(contribution, int):
+                contribution = max(0, buy_in - int(p.get("chips", 0) or 0))
             player_status = p.get("status")
 
             result = p.get("result")
@@ -270,6 +275,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
                     result = "lost"
 
             hand_name = p.get("hand_name")
+            hand_desc = p.get("hand_description")
             revealed_cards = list(p.get("revealed_cards") or [])
             hand_cards = list(p.get("hand_cards") or [])
 
@@ -283,8 +289,9 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
                 if not hand_name and len(visible_cards) == 2:
                     community = [c for c in (state_dict.get("community_cards") or []) if c != "??"]
                     if len(community) >= 3:
-                        (rank, _), best_five = evaluate_hand_best(visible_cards + community)
+                        (rank, tiebreakers), best_five = evaluate_hand_best(visible_cards + community)
                         hand_name = hand_display_name(rank)
+                        hand_desc = hand_description(rank, tiebreakers)
                         hand_cards = best_five
                         if s.user_id in winners:
                             for card in best_five:
@@ -293,6 +300,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
             else:
                 revealed_cards = []
                 hand_name = None
+                hand_desc = None
                 hand_cards = []
 
             results.append({
@@ -303,6 +311,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
                 "contribution": contribution,
                 "net": net,
                 "hand_name": hand_name,
+                "hand_description": hand_desc,
                 "revealed_cards": revealed_cards,
                 "hand_cards": hand_cards,
             })

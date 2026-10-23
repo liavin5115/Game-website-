@@ -77,6 +77,53 @@ def hand_display_name(rank: int) -> str:
     return HAND_NAMES.get(rank, "High Card")
 
 
+RANK_NAMES = {
+    2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six", 7: "Seven",
+    8: "Eight", 9: "Nine", 10: "Ten", 11: "Jack", 12: "Queen", 13: "King", 14: "Ace",
+}
+RANK_NAMES_PLURAL = {
+    2: "Twos", 3: "Threes", 4: "Fours", 5: "Fives", 6: "Sixes", 7: "Sevens",
+    8: "Eights", 9: "Nines", 10: "Tens", 11: "Jacks", 12: "Queens", 13: "Kings", 14: "Aces",
+}
+
+
+def _rank_name(rank: int) -> str:
+    return RANK_NAMES.get(rank, str(rank))
+
+
+def _rank_names(rank: int) -> str:
+    return RANK_NAMES_PLURAL.get(rank, str(rank))
+
+
+def hand_description(rank: int, tiebreakers: list[int]) -> str:
+    """Human description of a made hand that names the relevant ranks.
+
+    Examples: "Two Pair, Aces and Sevens", "Flush, King high".
+    """
+    tb = list(tiebreakers or [])
+    if rank == 9:
+        return "Royal Flush"
+    if rank == 8 and tb:
+        return f"Straight Flush, {_rank_name(tb[0])} high"
+    if rank == 7 and len(tb) >= 1:
+        return f"Four of a Kind, {_rank_names(tb[0])}"
+    if rank == 6 and len(tb) >= 2:
+        return f"Full House, {_rank_names(tb[0])} full of {_rank_names(tb[1])}"
+    if rank == 5 and tb:
+        return f"Flush, {_rank_name(tb[0])} high"
+    if rank == 4 and tb:
+        return f"Straight, {_rank_name(tb[0])} high"
+    if rank == 3 and tb:
+        return f"Three of a Kind, {_rank_names(tb[0])}"
+    if rank == 2 and len(tb) >= 2:
+        return f"Two Pair, {_rank_names(tb[0])} and {_rank_names(tb[1])}"
+    if rank == 1 and tb:
+        return f"Pair, {_rank_names(tb[0])}"
+    if tb:
+        return f"High Card, {_rank_name(tb[0])} high"
+    return HAND_NAMES.get(rank, "High Card")
+
+
 def _evaluate_5cards(cards: list[str]) -> tuple[int, list[int]]:
     """Evaluate exactly 5 cards."""
     ranks = [RANK_VALUE[c[0]] for c in cards]

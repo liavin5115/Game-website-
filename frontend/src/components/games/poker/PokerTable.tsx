@@ -229,7 +229,9 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const players = gameState?.players || [];
   // me should be a PlayerState from gameState.players, not a GamePlayer from game.players
   const me = players.find((p: any) => p.id === (myPlayer as any)?.id) || players[0];
-  const mySeat = 0; // PlayerState doesn't have seat; "me" is always at bottom (seat 0 in display)
+  // The absolute seat that "me" occupies. GamePlayer carries `seat`; watchers
+  // (not seated) fall back to seat 0 so seat 0 still renders at the bottom.
+  const mySeat = game?.players?.find((p) => p.id === (myPlayer as any)?.id)?.seat ?? 0;
   const numPlayers = players.length;
 
   // Find current turn player. Finished hands have no turn, even if an old

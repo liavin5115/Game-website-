@@ -1,6 +1,7 @@
 /** Main layout with header and navigation */
 import { Link, NavLink, Outlet } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
+import { formatPoints } from '../../lib/format';
 
 interface LayoutProps {
   showReturnBanner?: boolean;
@@ -46,8 +47,8 @@ export function Layout({ showReturnBanner = false, activeGame = null, onReturnTo
                   ))}
 
                   <div className="flex items-center gap-2 sm:gap-3 px-2 sm:px-3 py-2 bg-gray-100 dark:bg-gray-700 rounded-lg">
-                    <span className="text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                      {user?.points || 0} pts
+                    <span className="num text-xs sm:text-sm font-medium text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                      {formatPoints(user?.points ?? 0)} pts
                     </span>
                     <span className="hidden md:inline text-sm text-gray-500 dark:text-gray-400">
                       {user?.username}

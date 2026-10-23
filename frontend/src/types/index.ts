@@ -68,6 +68,7 @@ export interface PokerResult {
   contribution: number;
   net: number;
   hand_name: string | null;
+  hand_description?: string | null;
   revealed_cards: string[];
   hand_cards: string[];
 }
