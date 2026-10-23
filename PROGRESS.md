@@ -629,3 +629,37 @@ Five small fixes, each with evidence kept and a test where the logic is non-triv
 - Frontend: `npx tsc --noEmit`, `npx vitest run` (16 passed) and `npm run build` all pass. There is no ESLint config in the repo, so tsc + build is the lint gate.
 - Backend: poker suite green; full `pytest -q` -> 36 passed, 5 failed + 1 error, the same pre-existing `test_fixes.py` / `test_websocket_client.py` (live-server / asyncio) failures as before.
 - Two windows, showdown hand (game 22): the seat-0 window shows itself at the bottom with "You lost 5 pts", stacks 95/105, "Pot: 0", "Pot total: 10", navbar "1,888 pts"; the seat-1 window shows itself at the bottom with "You won 5 pts", navbar "1,817 pts". Hand names read "Pair, Fives" and "Full House, Fours full of Fives".
+
+## Desktop table spacing redesign (2026-10-23)
+
+Visual-only fix for the desktop (>=768px) oval table; no game logic or backend changes. All edits are in `frontend/src/components/games/poker/PokerTableDisplay.tsx` plus two new libs.
+
+### What was wrong
+1. Status line touched my seat's top border.
+2. My bottom seat nearly touched the felt's bottom edge and the action bar.
+3. Community cards sat too close to the top opponent's stack number.
+4. The street label "Turn" read like the "Your turn" prompt.
+5. The winner's green highlight (ring-offset) grew the seat and its hand name was hidden behind the card row.
+6. "Hand complete" overlapped my D/SB badges.
+7. Reveal banner + status line + my seat were squeezed into one strip.
+8. "Hand complete" and the reveal banner showed at the same time.
+9. The pot showed 0 during the reveal.
+
+### Fixes
+- **Reserved center column**: one absolutely-centered, fixed-width column with fixed-height rows `[community cards 90][street 22][pot 20][message 28]` and 6px gaps (ZONE_W 352, ZONE_H 178). The DOM reuses the exact px the seat-placement math uses, so the safe zone and the rendered boxes always agree.
+- **One message at a time**: preflop/streets show `Your turn - <actions>` or `Waiting for <name>...`; once finished the reveal banner (`Showing result in N` + Skip) *replaces* the status text, then `Hand complete`. The row is width-constrained and truncates, so a long name can never breach the zone.
+- **Seats**: fixed-size boxes (normal 128x140, compact 112x128) placed on the rim ellipse by **equal arc length** (equal angles bunch/overlap at 10 players), pushed out of the zone expanded by half-size + 16px, then clamped inside the rim. New `lib/pokerTableLayout.ts`; container height `min(72vh, 640px)` / min 540.
+- **Street pill** disambiguates from the turn prompt: `Preflop`, `Flop - 3rd street`, `Turn - 4th street`, `River - 5th street`, `Showdown`.
+- **Winner / current-turn highlights** use `box-shadow` (no `ring-offset`, no size change, no layout shift); the hand name has its own reserved line *inside* the seat box, and the winner ring sits on the seat (z-10) below the center (z-20).
+- **Badges** (D/SB/BB) live in one fixed-height row inside the seat; the message, banner, winner ring and timer cannot overlap them.
+- **Pot** stays at `potTotal` through the reveal and shows 0 only when the result panel appears (`centerPot = isFinished ? (showResult ? 0 : potTotal) : pot`).
+- **Desktop action bar** is now inline right below the table, so it can never cover the bottom seat.
+
+### Dev-only overlap check
+- `lib/pokerOverlapCheck.ts` measures the center rows, every seat, every badge slot and the action bar and reports any pair closer than 16px (or overlapping). Exposed in DEV as `window.__pokerOverlapCheck()`.
+
+### Verification
+- `npx tsc --noEmit`, `npm run build` and `npx vitest run` (23 passed, incl. the new `lib/pokerTableLayout.test.ts`) all pass. No ESLint config in the repo, so tsc + build is the lint gate.
+- Checked in a real browser by staging same-origin iframes at exactly 1366x768 and 1024x768 and running `__pokerOverlapCheck()` inside each: **zero violations** for 2, 6 and 10 players at preflop / flop / turn / river / reveal / result, at both sizes. Every seat was also shown as "me" from a second window (two users), zero violations.
+- Observed states: reveal banner + `Pot: <total>` kept (7/10/30/50), then `Hand complete` + `Pot: 0` at the result panel; the banner and "Hand complete" never appear together.
+- Screenshots captured for 10 players at 1366 (preflop, reveal) and 1024 (result).
