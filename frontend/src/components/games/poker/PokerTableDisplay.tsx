@@ -32,10 +32,58 @@ const STATUS_BADGE_STYLES: Record<string, string> = {
 const ZONE_W = 352; // 5 x 64px cards + 4 x 8px gaps
 const ZONE_H = 178; // cards 90 + street 22 + pot 20 + message 28 + 3 x 6 gaps
 const SEAT_GAP = 16;
-const DESKTOP_SEAT = {
-  normal: { w: 128, h: 140 },
-  compact: { w: 112, h: 128 },
-} as const;
+const SEAT_RIM = 6;
+
+/**
+ * Fixed desktop seat geometry. My seat is a little larger (md cards) than the
+ * opponents' (sm cards). Every row has a reserved height so the seat box never
+ * changes size when badges, the hand name or the turn timer appear.
+ */
+interface SeatMetrics {
+  w: number;
+  h: number;
+  card: 'xs' | 'sm' | 'md';
+  gap: number;
+  badgesH: number;
+  nameH: number;
+  cardsH: number;
+  stackH: number;
+  handH: number;
+  statusH: number;
+  timerH: number;
+  nameClass: string;
+}
+
+const SEAT_METRICS: Record<'me' | 'opp', SeatMetrics> = {
+  me: {
+    w: 152,
+    h: 183,
+    card: 'md',
+    gap: 2,
+    badgesH: 18,
+    nameH: 16,
+    cardsH: 90,
+    stackH: 16,
+    handH: 10,
+    statusH: 16,
+    timerH: 5,
+    nameClass: 'text-sm max-w-[128px]',
+  },
+  opp: {
+    w: 118,
+    h: 148,
+    card: 'sm',
+    gap: 2,
+    badgesH: 18,
+    nameH: 16,
+    cardsH: 56,
+    stackH: 16,
+    handH: 10,
+    statusH: 16,
+    timerH: 4,
+    nameClass: 'text-xs max-w-[100px]',
+  },
+};
 
 function getChipColor(amount: number) {
   if (amount >= 1000) return chipColors.orange;
@@ -158,9 +206,9 @@ function PlayerSeat({
   showTimer,
   remaining,
   turnSeconds,
-  isLowTime,
   compact = false,
   fixedSize = false,
+  metrics,
 }: {
   player: any;
   isMe: boolean;
@@ -186,22 +234,44 @@ function PlayerSeat({
   compact?: boolean;
   /** Desktop: lock the seat to a fixed box so placement math is exact. */
   fixedSize?: boolean;
+  /** Desktop fixed-size geometry; required when `fixedSize` is set. */
+  metrics?: SeatMetrics;
 }) {
   const showCards = isMe || status === 'showdown' || isShowdown;
   const isFolded = status === 'folded';
   const isAllIn = status === 'allin' || status === 'all_in';
   const isAway = status === 'away';
-  const cardSize = compact || fixedSize ? 'xs' : 'sm';
+  const fixed = fixedSize && !!metrics;
+  // Fixed desktop seats always use the compact badge style so up to three
+  // badges (D/SB/BB) fit one fixed-height slot without touching.
+  const badgeCompact = fixed ? true : compact;
+  const cardSize: 'xs' | 'sm' | 'md' = fixed ? metrics!.card : compact ? 'xs' : 'sm';
   const showNet = revealActive && (revealRemaining <= 2 || !showdown) && result;
   const dimmed = revealActive && !isWinner;
 
+  // Turn timer. Colour buckets match the spec (>10s green, 10-5s amber, <5s red
+  // with a soft pulse); the seconds are always rendered as text so colour is
+  // never the only signal. The bar lives in its own reserved row at the bottom
+  // edge of the seat, never in the badge row.
+  const secs = Math.max(0, Math.floor(remaining ?? 0));
+  const totalSecs = turnSeconds ?? 30;
+  const timerProgress = totalSecs > 0 ? Math.max(0, Math.min(1, (remaining ?? 0) / totalSecs)) : 0;
+  const timerFill =
+    secs < 5 ? 'bg-red-500 motion-safe:animate-pulse' : secs <= 10 ? 'bg-amber-400' : 'bg-green-500';
+  const timerText =
+    secs < 5
+      ? 'text-red-600 dark:text-red-400'
+      : secs <= 10
+        ? 'text-amber-600 dark:text-amber-400'
+        : 'text-green-600 dark:text-green-400';
+
+  const rowStyle = (h: number) => (fixed ? { height: h } : undefined);
+
   return (
     <div
-      className={`flex flex-col items-center rounded-xl transition-[opacity,box-shadow] duration-200 ${
-        fixedSize
-          ? compact
-            ? 'w-[112px] h-[128px] justify-center gap-[2px] px-1'
-            : 'w-[128px] h-[140px] justify-center gap-[3px] px-1'
+      className={`relative flex flex-col items-center rounded-xl transition-[opacity,box-shadow] duration-200 ${
+        fixed
+          ? 'justify-start px-1'
           : compact
             ? 'min-w-[112px] gap-1'
             : 'min-w-[140px] gap-1.5'
@@ -210,46 +280,53 @@ function PlayerSeat({
       } ${isWinner && revealActive ? 'shadow-[0_0_0_3px_rgba(74,222,128,0.95)]' : ''} ${
         dimmed ? 'opacity-40' : ''
       }`}
+      style={fixed ? { width: metrics!.w, height: metrics!.h, gap: metrics!.gap } : undefined}
     >
-      {/* Top badges row: fixed slot so the timer never shifts the name */}
+      {/* Top badges row: one fixed slot per seat for D / SB / BB only. The
+          turn timer deliberately does NOT live here. */}
       <div
         data-pk-badges
-        className={`flex flex-nowrap items-center gap-0.5 w-full justify-center overflow-hidden ${
-          fixedSize ? (compact ? 'h-5 shrink-0' : 'h-6 shrink-0') : compact ? 'h-6' : 'min-h-[32px] gap-1'
+        className={`flex flex-nowrap shrink-0 items-center gap-0.5 w-full justify-center overflow-hidden ${
+          fixed ? '' : compact ? 'h-6' : 'min-h-[32px] gap-1'
         }`}
+        style={fixed ? rowStyle(metrics!.badgesH) : undefined}
       >
         {isDealer && (
-          <Badge compact={compact} className="bg-white text-gray-900 border border-gray-300 dark:bg-gray-800 dark:text-white dark:border-gray-600" title="Dealer">
+          <Badge compact={badgeCompact} className="bg-white text-gray-900 border border-gray-300 dark:bg-gray-800 dark:text-white dark:border-gray-600" title="Dealer">
             D
           </Badge>
         )}
-        {isSB && <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300" title="Small Blind">SB</Badge>}
-        {isBB && <Badge compact={compact} className="bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300" title="Big Blind">BB</Badge>}
-        {showTimer && (
-          <TimerRing
-            remaining={remaining ?? 0}
-            totalSeconds={turnSeconds ?? 30}
-            isLowTime={isLowTime ?? false}
-            size={compact ? 'sm' : 'md'}
-            className={`flex-shrink-0 ${compact ? 'ml-1' : 'ml-2'}`}
-          />
-        )}
+        {isSB && <Badge compact={badgeCompact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300" title="Small Blind">SB</Badge>}
+        {isBB && <Badge compact={badgeCompact} className="bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300" title="Big Blind">BB</Badge>}
       </div>
 
       {/* Name and (You) */}
-      <div className="flex items-center gap-1 text-center">
-        <span className={`font-medium text-gray-900 dark:text-white truncate ${compact ? 'text-xs max-w-[86px]' : 'text-sm max-w-[120px]'}`}>
+      <div
+        className={`flex w-full shrink-0 items-center justify-center gap-1 overflow-hidden text-center ${fixed ? 'leading-4' : ''}`}
+        style={fixed ? rowStyle(metrics!.nameH) : undefined}
+      >
+        <span
+          className={`font-medium text-gray-900 dark:text-white truncate ${
+            fixed ? metrics!.nameClass : compact ? 'text-xs max-w-[86px]' : 'text-sm max-w-[120px]'
+          }`}
+        >
           {player.username}
         </span>
         {isMe && (
-          <Badge compact={compact} className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex-shrink-0">
+          <Badge compact={badgeCompact} className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex-shrink-0">
             You
           </Badge>
         )}
       </div>
 
       {/* Cards */}
-      <div className={`flex gap-0.5 items-center justify-center ${fixedSize ? 'h-10 shrink-0' : compact ? 'min-h-[40px]' : 'min-h-[56px]'}`}>
+      <div
+        data-pk-cards
+        className={`flex shrink-0 gap-0.5 items-center justify-center ${
+          fixed ? '' : compact ? 'min-h-[40px]' : 'min-h-[56px]'
+        }`}
+        style={fixed ? rowStyle(metrics!.cardsH) : undefined}
+      >
         {isFolded && !isShowdown ? (
           <div className="flex gap-0.5 opacity-40">
             <Card card="??" faceDown size={cardSize} />
@@ -277,7 +354,13 @@ function PlayerSeat({
       {/* Stack and current bet on one line: no separate pill to overlap or
           add height. The bet stays visible as a secondary value. After the
           hand is settled the stack is what the player actually received. */}
-      <div className={`num flex items-baseline gap-1 font-semibold text-gray-900 dark:text-white ${fixedSize ? (compact ? 'h-4 shrink-0 text-[11px]' : 'h-[14px] shrink-0 text-xs') : compact ? 'text-[11px]' : 'text-xs'}`}>
+      <div
+        data-pk-stack
+        className={`num flex shrink-0 items-baseline justify-center gap-1 overflow-hidden font-semibold text-gray-900 dark:text-white ${
+          fixed ? 'w-full text-xs' : compact ? 'text-[11px]' : 'text-xs'
+        }`}
+        style={fixed ? rowStyle(metrics!.stackH) : undefined}
+      >
         <span>{formatPoints(isFinished && result ? result.payout : player.chips)}</span>
         {player.bet > 0 && (
           <span className="text-yellow-600 dark:text-yellow-400 font-normal">Â· {formatPoints(player.bet)}</span>
@@ -285,17 +368,12 @@ function PlayerSeat({
       </div>
 
       {/* Hand name: its own reserved line so the seat height never changes. */}
-      {fixedSize || (isFinished && showdown && (result?.hand_description || result?.hand_name)) ? (
+      {fixed || (isFinished && showdown && (result?.hand_description || result?.hand_name)) ? (
         <div
-          className={`flex w-full items-center justify-center overflow-hidden text-center font-medium text-green-700 dark:text-green-300 ${
-            fixedSize
-              ? compact
-                ? 'h-[12px] shrink-0 text-[9px]'
-                : 'h-[14px] shrink-0 text-[10px]'
-              : compact
-                ? 'text-[9px]'
-                : 'text-[10px]'
+          className={`flex w-full shrink-0 items-center justify-center overflow-hidden text-center font-medium leading-none text-green-700 dark:text-green-300 ${
+            fixed ? 'text-[10px]' : compact ? 'text-[9px]' : 'text-[10px]'
           }`}
+          style={fixed ? rowStyle(metrics!.handH) : undefined}
         >
           <span className="truncate">
             {isFinished && showdown ? result?.hand_description || result?.hand_name : ''}
@@ -304,11 +382,13 @@ function PlayerSeat({
       ) : null}
 
       {/* One reserved status slot: net badge during the reveal, otherwise the
-          folded/all-in/turn badges. Nothing else can push this row around. */}
+          folded/all-in/turn badges plus the timer seconds at the right end of
+          the "Your Turn" line. Nothing else can push this row around. */}
       <div
-        className={`flex flex-nowrap items-center justify-center gap-0.5 overflow-hidden ${
-          fixedSize ? (compact ? 'h-[14px] shrink-0' : 'h-[16px] shrink-0') : ''
+        className={`relative flex w-full shrink-0 flex-nowrap items-center justify-center gap-0.5 overflow-hidden ${
+          fixed ? '' : ''
         }`}
+        style={fixed ? rowStyle(metrics!.statusH) : undefined}
       >
         {showNet ? (
           <span
@@ -324,17 +404,45 @@ function PlayerSeat({
           </span>
         ) : (
           <>
-            {isFolded && <Badge compact={compact} className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
-            {isAllIn && <Badge compact={compact} className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
-            {!connected && !isMe && <Badge compact={compact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
-            {isAway && (connected || !compact) && <Badge compact={compact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
-            {autoActed && !isAway && <Badge compact={compact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
+            {isFolded && <Badge compact={badgeCompact} className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
+            {isAllIn && <Badge compact={badgeCompact} className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
+            {!connected && !isMe && <Badge compact={badgeCompact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
+            {isAway && (connected || !compact) && <Badge compact={badgeCompact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
+            {autoActed && !isAway && <Badge compact={badgeCompact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
             {isCurrentTurn && !isFinished && !isFolded && !isAllIn && !isAway && (
-              <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
+              <Badge compact={badgeCompact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
             )}
           </>
         )}
+        {fixed && showTimer && (
+          <span className={`num pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 text-[10px] font-bold tabular-nums ${timerText}`}>
+            {secs}s
+          </span>
+        )}
       </div>
+
+      {/* Reserved timer slot: a thin full-width progress bar pinned to the
+          bottom edge of the seat. It occupies space even when it is nobody's
+          turn (empty track), so the seat never shifts when the turn starts. */}
+      {fixed && (
+        <div
+          data-pk-timer
+          className="relative w-full shrink-0 overflow-hidden rounded-full bg-black/10 dark:bg-white/15"
+          style={rowStyle(metrics!.timerH)}
+          role="progressbar"
+          aria-hidden={!showTimer}
+          aria-valuenow={showTimer ? secs : undefined}
+          aria-valuemin={0}
+          aria-valuemax={totalSecs}
+        >
+          {showTimer && (
+            <div
+              className={`h-full rounded-full transition-[width,background-color] duration-250 ease-linear ${timerFill}`}
+              style={{ width: `${Math.round(timerProgress * 100)}%` }}
+            />
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1076,22 +1184,24 @@ export function PokerTableDisplay({
   // result panel actually shows (the pot has been paid to the winner).
   const centerPot = isFinished ? (showResult ? 0 : potTotal) : pot;
 
-  const compactDesktop = numPlayers >= 6;
-  const seatBox = compactDesktop ? DESKTOP_SEAT.compact : DESKTOP_SEAT.normal;
+  // My seat is deliberately larger (md cards) than the opponents' (sm cards).
   const layout = useMemo(
     () =>
       computeTableLayout({
         width: tableSize.w || 1152,
-        height: tableSize.h || 553,
+        height: tableSize.h || 600,
         n: numPlayers,
         mySeat,
-        seatW: seatBox.w,
-        seatH: seatBox.h,
+        seatW: SEAT_METRICS.opp.w,
+        seatH: SEAT_METRICS.opp.h,
+        mySeatW: SEAT_METRICS.me.w,
+        mySeatH: SEAT_METRICS.me.h,
         zoneW: ZONE_W,
         zoneH: ZONE_H,
         margin: SEAT_GAP,
+        rimMargin: SEAT_RIM,
       }),
-    [tableSize.w, tableSize.h, numPlayers, mySeat, seatBox.w, seatBox.h],
+    [tableSize.w, tableSize.h, numPlayers, mySeat],
   );
 
   const pillLabel = STREET_PILL_LABELS[street] || `Street ${street}`;
@@ -1165,7 +1275,7 @@ export function PokerTableDisplay({
         <div
           ref={tableRef}
           className="w-full max-w-6xl mx-auto relative"
-          style={{ height: 'min(72vh, 640px)', minHeight: 540 }}
+          style={{ height: 'min(72vh, 640px)', minHeight: 600 }}
         >
           {/* Felt table background */}
           <div className="absolute inset-0 rounded-[50%] bg-gradient-to-br from-felt-700 via-felt-600 to-felt-800 border-4 border-felt-900 shadow-2xl overflow-hidden">
@@ -1228,7 +1338,7 @@ export function PokerTableDisplay({
                 style={{
                   left: pos.x,
                   top: pos.y,
-                  width: seatBox.w,
+                  width: player.id === me?.id ? SEAT_METRICS.me.w : SEAT_METRICS.opp.w,
                   transform: 'translate(-50%, -50%)',
                 }}
               >
@@ -1254,7 +1364,7 @@ export function PokerTableDisplay({
                   remaining={remaining}
                   turnSeconds={turnSeconds}
                   isLowTime={isLowTime}
-                  compact={compactDesktop}
+                  metrics={player.id === me?.id ? SEAT_METRICS.me : SEAT_METRICS.opp}
                   fixedSize
                 />
               </div>

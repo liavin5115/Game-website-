@@ -36,6 +36,9 @@ export interface OverlapReport {
 
 export const SEAT_SELECTOR = '[data-pk-seat]';
 export const BADGES_SELECTOR = '[data-pk-badges]';
+export const TIMER_SELECTOR = '[data-pk-timer]';
+export const CARDS_SELECTOR = '[data-pk-cards]';
+export const STACK_SELECTOR = '[data-pk-stack]';
 export const CENTER_SELECTOR = '[data-pk-cc],[data-pk-street],[data-pk-pot],[data-pk-message]';
 export const ACTIONBAR_SELECTOR = '[data-pk-actionbar]';
 
@@ -52,8 +55,14 @@ export function boxGap(a: CheckRect, b: CheckRect): number {
   return Math.max(gapX, gapY);
 }
 
+type PartKind = 'seat' | 'badges' | 'timer' | 'cards' | 'stack' | 'center' | 'actionbar';
+
 interface Labeled extends CheckRect {
-  kind: 'seat' | 'badges' | 'center' | 'actionbar';
+  kind: PartKind;
+  /** Identifies the seat (or logical region) a box belongs to. */
+  owner: string;
+  /** True for the seat's outer box, which *contains* its own parts. */
+  shell: boolean;
 }
 
 export function checkPokerOverlaps(root: Element | null, minGap = 16): OverlapReport {
@@ -62,13 +71,26 @@ export function checkPokerOverlaps(root: Element | null, minGap = 16): OverlapRe
     return { ok: false, minGap, violations: [], rects: [], missing: ['root'] };
   }
 
-  const collect = (selector: string, kind: Labeled['kind']): Labeled[] => {
+  const ownerOf = (el: Element, fallback: string): string => {
+    const seat = el.closest('[data-pk-seat]');
+    return seat ? `seat${seat.getAttribute('data-pk-seat')}` : fallback;
+  };
+
+  const collect = (selector: string, kind: PartKind, shell = false): Labeled[] => {
     const els = Array.from(root.querySelectorAll(selector));
     if (els.length === 0) missing.push(selector);
     const out: Labeled[] = [];
     els.forEach((el, i) => {
       const r = toRect(el);
-      if (r) out.push({ ...r, id: els.length > 1 ? `${kind}#${i}` : kind, kind });
+      if (r) {
+        out.push({
+          ...r,
+          id: els.length > 1 ? `${kind}#${i}` : kind,
+          kind,
+          owner: ownerOf(el, kind),
+          shell,
+        });
+      }
     });
     return out;
   };
@@ -76,13 +98,16 @@ export function checkPokerOverlaps(root: Element | null, minGap = 16): OverlapRe
   const doc = root.ownerDocument || document;
   const actionbar = doc.querySelector(ACTIONBAR_SELECTOR);
   const rects: Labeled[] = [
-    ...collect(SEAT_SELECTOR, 'seat'),
+    ...collect(SEAT_SELECTOR, 'seat', true),
     ...collect(BADGES_SELECTOR, 'badges'),
+    ...collect(TIMER_SELECTOR, 'timer'),
+    ...collect(CARDS_SELECTOR, 'cards'),
+    ...collect(STACK_SELECTOR, 'stack'),
     ...collect(CENTER_SELECTOR, 'center'),
   ];
   if (actionbar) {
     const r = toRect(actionbar);
-    if (r) rects.push({ ...r, id: 'actionbar', kind: 'actionbar' });
+    if (r) rects.push({ ...r, id: 'actionbar', kind: 'actionbar', owner: 'actionbar', shell: false });
   } else {
     missing.push(ACTIONBAR_SELECTOR);
   }
@@ -92,15 +117,14 @@ export function checkPokerOverlaps(root: Element | null, minGap = 16): OverlapRe
     for (let j = i + 1; j < rects.length; j++) {
       const a = rects[i];
       const b = rects[j];
+      const sameOwner = a.owner === b.owner;
+      // A seat's outer box contains its own badges/timer/cards/stack, so those
+      // pairs are expected to overlap and carry no meaning.
+      if (sameOwner && (a.shell || b.shell)) continue;
       const gap = boxGap(a, b);
-      // Badges live inside their own seat, so that pair is expected to overlap.
-      const sameSeatPair =
-        (a.kind === 'seat' && b.kind === 'badges') || (a.kind === 'badges' && b.kind === 'seat');
-      if (sameSeatPair) continue;
-      // Center rows are stacked; they only need to not overlap each other.
-      const bothCenter = a.kind === 'center' && b.kind === 'center';
-      // Two badge slots may sit side by side; require the normal gap.
-      const required = bothCenter ? 0 : minGap;
+      // Boxes stacked inside the same seat (or the same center column) only
+      // need to not overlap; everything else keeps the full safe gap.
+      const required = sameOwner ? 0 : minGap;
       if (gap < required) {
         violations.push({ a: a.id, b: b.id, gap: Math.round(gap * 10) / 10, minGap: required });
       }

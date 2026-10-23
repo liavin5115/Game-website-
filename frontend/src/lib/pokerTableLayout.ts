@@ -33,12 +33,18 @@ export interface LayoutParams {
   /** Total seats. */
   n: number;
   mySeat: number;
+  /** Opponents' seat box (px). */
   seatW: number;
   seatH: number;
+  /** My seat box (px); defaults to the opponent size. */
+  mySeatW?: number;
+  mySeatH?: number;
   zoneW: number;
   zoneH: number;
-  /** Minimum gap kept between a seat and the zone, and a seat and the edge. */
+  /** Minimum gap kept between a seat and the reserved center zone. */
   margin: number;
+  /** Minimum gap kept between a seat and the container rim; defaults to `margin`. */
+  rimMargin?: number;
 }
 
 function clamp(v: number, lo: number, hi: number) {
@@ -63,10 +69,11 @@ function clamp(v: number, lo: number, hi: number) {
  */
 export function computeTableLayout(p: LayoutParams): TableLayout {
   const { width: W, height: H, n, mySeat, seatW, seatH, zoneW, zoneH, margin } = p;
+  const myW = p.mySeatW ?? seatW;
+  const myH = p.mySeatH ?? seatH;
+  const rim = p.rimMargin ?? margin;
   const cx = W / 2;
   const cy = H / 2;
-  const halfW = seatW / 2;
-  const halfH = seatH / 2;
   const zoneLeft = cx - zoneW / 2;
   const zoneTop = cy - zoneH / 2;
   const zone: Rect = {
@@ -76,14 +83,9 @@ export function computeTableLayout(p: LayoutParams): TableLayout {
     bottom: zoneTop + zoneH,
   };
 
-  const rx = Math.max(0, W / 2 - halfW - margin);
-  const ry = Math.max(0, H / 2 - halfH - margin);
-  // Zone expanded by the seat half-size and the minimum gap: a seat center must
-  // sit outside this rectangle. +1px absorbs sub-pixel layout rounding so the
-  // rendered gap never dips below the requested minimum.
-  const gap = margin + 1;
-  const ex = zoneW / 2 + halfW + gap;
-  const ey = zoneH / 2 + halfH + gap;
+  // The rim ellipse clears the largest seat so no box ever crosses it.
+  const rx = Math.max(0, W / 2 - Math.max(seatW, myW) / 2 - rim);
+  const ry = Math.max(0, H / 2 - Math.max(seatH, myH) / 2 - rim);
 
   const count = Math.max(1, Math.floor(n) || 1);
 
@@ -112,6 +114,16 @@ export function computeTableLayout(p: LayoutParams): TableLayout {
   let ok = true;
 
   for (let seat = 0; seat < count; seat++) {
+    const isMe = seat === mySeat;
+    const halfW = (isMe ? myW : seatW) / 2;
+    const halfH = (isMe ? myH : seatH) / 2;
+    // Zone expanded by this seat's half-size and the minimum gap: the center
+    // must sit outside this rectangle. +1px absorbs sub-pixel layout rounding
+    // so the rendered gap never dips below the requested minimum.
+    const gap = margin + 1;
+    const ex = zoneW / 2 + halfW + gap;
+    const ey = zoneH / 2 + halfH + gap;
+
     const r = relativeSeatIndex(seat, mySeat, count);
     const target = (total * r) / count;
     let lo = 0;
@@ -138,8 +150,8 @@ export function computeTableLayout(p: LayoutParams): TableLayout {
       }
     }
 
-    x = clamp(x, margin + halfW, W - margin - halfW);
-    y = clamp(y, margin + halfH, H - margin - halfH);
+    x = clamp(x, rim + halfW, W - rim - halfW);
+    y = clamp(y, rim + halfH, H - rim - halfH);
 
     const clear = Math.abs(x - cx) >= ex - 0.5 || Math.abs(y - cy) >= ey - 0.5;
     if (!clear) ok = false;

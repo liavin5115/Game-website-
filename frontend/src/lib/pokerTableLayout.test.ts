@@ -8,21 +8,26 @@ interface Box {
   bottom: number;
 }
 
-const SEAT = {
-  normal: { w: 128, h: 140 },
-  compact: { w: 112, h: 128 },
-};
+// Real desktop seat geometry: my seat is a little larger (md cards) than the
+// opponents' (sm cards). These mirror SEAT_METRICS in PokerTableDisplay.tsx.
+const OPP = { w: 118, h: 148 };
+const ME = { w: 152, h: 183 };
 const ZONE_W = 352;
 const ZONE_H = 178;
 const MARGIN = 16;
+const RIM = 6;
 
-// Container sizes used on desktop. The table is max-w-6xl at 1366px wide and
-// the padded column width at 1024px; both use the same 72vh height cap.
+// Container sizes used on desktop: the max-w-6xl column at 1366px and the
+// padded column at 1024px, both at the 600px min height.
 const CONTAINERS = [
-  { w: 1152, h: 553 },
-  { w: 992, h: 553 },
+  { w: 1152, h: 600 },
+  { w: 992, h: 600 },
 ];
 const COUNTS = [2, 6, 10];
+
+function sizeFor(seat: number, mySeat: number): { w: number; h: number } {
+  return seat === mySeat ? ME : OPP;
+}
 
 function box(seat: PlacedSeat, size: { w: number; h: number }): Box {
   return {
@@ -43,24 +48,27 @@ function gap(a: Rect | Box, b: Rect | Box): number {
 describe('computeTableLayout', () => {
   for (const container of CONTAINERS) {
     for (const n of COUNTS) {
-      const size = n >= 6 ? SEAT.compact : SEAT.normal;
+      const mySeat = Math.min(1, n - 1);
       const layout = computeTableLayout({
         width: container.w,
         height: container.h,
         n,
-        mySeat: 0,
-        seatW: size.w,
-        seatH: size.h,
+        mySeat,
+        seatW: OPP.w,
+        seatH: OPP.h,
+        mySeatW: ME.w,
+        mySeatH: ME.h,
         zoneW: ZONE_W,
         zoneH: ZONE_H,
         margin: MARGIN,
+        rimMargin: RIM,
       });
 
       it(`places ${n} seats clear of the zone and each other (${container.w}x${container.h})`, () => {
         expect(layout.ok).toBe(true);
         expect(layout.seats).toHaveLength(n);
 
-        const boxes = layout.seats.map((s) => box(s, size));
+        const boxes = layout.seats.map((s, i) => box(s, sizeFor(i, mySeat)));
 
         // 1. Every seat keeps at least `margin` from the reserved center zone.
         for (const b of boxes) {
@@ -76,33 +84,40 @@ describe('computeTableLayout', () => {
 
         // 3. Every seat stays inside the container rim.
         for (const b of boxes) {
-          expect(b.left).toBeGreaterThanOrEqual(MARGIN - 0.5);
-          expect(b.top).toBeGreaterThanOrEqual(MARGIN - 0.5);
-          expect(b.right).toBeLessThanOrEqual(container.w - MARGIN + 0.5);
-          expect(b.bottom).toBeLessThanOrEqual(container.h - MARGIN + 0.5);
+          expect(b.left).toBeGreaterThanOrEqual(RIM - 0.5);
+          expect(b.top).toBeGreaterThanOrEqual(RIM - 0.5);
+          expect(b.right).toBeLessThanOrEqual(container.w - RIM + 0.5);
+          expect(b.bottom).toBeLessThanOrEqual(container.h - RIM + 0.5);
         }
       });
     }
   }
 
-  it('puts my seat (relative 0) at the bottom center and the count-1 seat at the top center', () => {
-    const size = SEAT.compact;
+  it('uses the larger my-seat box for my seat and keeps it clear of the zone', () => {
+    const mySeat = 3;
     const layout = computeTableLayout({
       width: 1152,
-      height: 553,
+      height: 600,
       n: 10,
-      mySeat: 3,
-      seatW: size.w,
-      seatH: size.h,
+      mySeat,
+      seatW: OPP.w,
+      seatH: OPP.h,
+      mySeatW: ME.w,
+      mySeatH: ME.h,
       zoneW: ZONE_W,
       zoneH: ZONE_H,
       margin: MARGIN,
+      rimMargin: RIM,
     });
-    // Absolute seat 3 is "me" -> bottom center.
+    // Absolute seat 3 is "me" -> bottom center; relative seat 5 is opposite.
     expect(layout.seats[3].x).toBeCloseTo(1152 / 2, 0);
-    expect(layout.seats[3].y).toBeGreaterThan(553 / 2);
-    // Relative seat 5 is opposite "me" -> top center.
-    expect(layout.seats[8].x).toBeCloseTo(1152 / 2, 0);
-    expect(layout.seats[8].y).toBeLessThan(553 / 2);
+    expect(layout.seats[3].y).toBeGreaterThan(600 / 2);
+    // The opposite seat sits at the top center (small arc-sampling tolerance).
+    expect(Math.abs(layout.seats[8].x - 1152 / 2)).toBeLessThan(5);
+    expect(layout.seats[8].y).toBeLessThan(600 / 2);
+
+    const mine = box(layout.seats[3], ME);
+    expect(gap(mine, layout.zone)).toBeGreaterThanOrEqual(MARGIN - 0.5);
+    expect(mine.bottom).toBeLessThanOrEqual(600 - RIM + 0.5);
   });
 });
