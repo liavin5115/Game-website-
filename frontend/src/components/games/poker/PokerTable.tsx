@@ -6,6 +6,7 @@ import { gamesApi } from '../../../api/client';
 import { PokerTableDisplay, type PokerTableDisplayProps } from './PokerTableDisplay';
 import { authApi } from '../../../api/client';
 import { useAuthStore } from '../../../stores/authStore';
+import { remainingSeconds } from '../../../lib/serverTime';
 import { Button } from '../../common/Button';
 
 export function PokerTable({ gameId }: { gameId: number }) {
@@ -17,7 +18,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
     error: loadError,
     isConnected,
     showReconnectBanner,
-    getServerTime,
+    clockOffset,
     myPlayer,
     isMyTurn,
     validActions,
@@ -57,11 +58,9 @@ export function PokerTable({ gameId }: { gameId: number }) {
       return;
     }
 
-    const deadlineMs = new Date(turnDeadline).getTime();
-
     const tick = () => {
-      const now = getServerTime();
-      const remainingSec = Math.max(0, Math.ceil((deadlineMs - now) / 1000));
+      const wallNow = Date.now();
+      const remainingSec = remainingSeconds(turnDeadline, clockOffset, wallNow);
       setRemaining(remainingSec);
 
       if (remainingSec <= 0 && isMyTurn && !refetchTimeoutRef.current) {
@@ -82,7 +81,14 @@ export function PokerTable({ gameId }: { gameId: number }) {
         clearTimeout(refetchTimeoutRef.current);
       }
     };
-  }, [game?.status, game?.turn_deadline, game?.turn_seconds, game?.turn_seq, isMyTurn, getServerTime, refetch]);
+  }, [game?.status, game?.turn_deadline, game?.turn_seconds, game?.turn_seq, isMyTurn, refetch, clockOffset]);
+
+  // A new turn or street invalidates any open bet/raise modal: the old amount
+  // and limits no longer match the server state.
+  useEffect(() => {
+    setShowBetModal(false);
+    setPendingBetAction(null);
+  }, [game?.turn_seq, game?.state?.phase]);
 
   // Redirect if waiting
   useEffect(() => {
@@ -106,27 +112,33 @@ export function PokerTable({ gameId }: { gameId: number }) {
     setActionError('');
 
     try {
-      await sendAction({ action: actionType, amount: amount || 0, turn_seq: game?.turn_seq || 0 });
+      await sendAction({ action: actionType, amount: Math.trunc(amount || 0), turn_seq: game?.turn_seq ?? 0 });
     } catch (err: any) {
       if (err.response?.status === 409) {
+        // The server already advanced the turn (timeout or another actor).
         refetch();
-        setActionError('Turn expired');
-        setTimeout(() => setActionError(''), 2000);
+        setActionError('Your turn expired — table refreshed');
+        setTimeout(() => setActionError(''), 3000);
       } else {
+        // Never hide the reason: show the server detail.
         setActionError(err.response?.data?.detail || 'Action failed');
       }
     }
   }, [isActionPending, sendAction, game?.turn_seq, refetch]);
 
   const openBetModal = useCallback((actionType: 'bet' | 'raise', minAmount: number) => {
-    const meChips = (myPlayer as any)?.chips ?? 0;
-    const meBet = myPlayer?.bet ?? 0;
-    const maxAmount = actionType === 'bet' ? meChips : meChips + meBet;
+    // Use PlayerState (game.state.players) — game.players is GamePlayer where
+    // `bet` is the buy-in and `chips` does not exist.
+    const meState = game?.state?.players?.find((p: any) => p.id === (myPlayer as any)?.id);
+    const limits = game?.my_action_limits;
+    const fallbackMax = Number(meState?.chips ?? 0) + Number(meState?.bet ?? 0);
+    const maxAmount = Math.max(0, Math.trunc(Number(limits?.max_bet_to ?? fallbackMax)));
+    const safeMin = Math.max(0, Math.min(maxAmount, Math.ceil(Number(minAmount) || 0)));
     setPendingBetAction(actionType);
-    setBetAmount(minAmount);
+    setBetAmount(safeMin);
     setBetMaxAmount(maxAmount);
     setShowBetModal(true);
-  }, [myPlayer]);
+  }, [game, myPlayer]);
 
   const confirmBet = useCallback(() => {
     if (pendingBetAction) {
@@ -226,12 +238,13 @@ export function PokerTable({ gameId }: { gameId: number }) {
 
   const canCheck = validActions.includes('check');
 
-  // Get min/max from server metadata for bet/raise
+  // Min/max come only from the server: my_action_limits is computed from the
+  // authoritative game state on every GET. Fall back to server state fields.
   const currentBet = gameState?.current_bet ?? 0;
   const myBet = me?.bet ?? 0;
   const callAmount = currentBet - myBet;
-  const betMin = gameState?.min_raise ?? bbAmount;
-  const raiseMin = currentBet + (gameState?.min_raise ?? bbAmount);
+  const betMin = game?.my_action_limits?.min_bet_to ?? (gameState?.min_raise ?? bbAmount);
+  const raiseMin = game?.my_action_limits?.min_raise_to ?? (currentBet + (gameState?.min_raise ?? bbAmount));
 
   const isShowdown = gameState?.phase === 'showdown' || game?.status === 'finished';
 

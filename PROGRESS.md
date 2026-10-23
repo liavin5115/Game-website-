@@ -401,21 +401,36 @@ Response (200): GameResponse with state visible to requesting player
 - [DONE] RESUME AND RECONNECT: Refresh mid-hand rebuilds table/timer/cards from server; active-game banner/redirect works for poker; finished-while-away shows finished panel.
 - [DONE] RULES PANEL: Collapsible "Rules" panel (blinds buy_in//20 and half, no rake, leftover refunded, 30s/turn, timeout = check or fold).
 - [DONE] tsc --noEmit passes, build passes, no temporary logs or dev preview route.
-# #   P o k e r   F r o n t e n d   -   B u g   F i x :   F u l l - s c r e e n   f e l t   b a c k g r o u n d   ( D O N E )  
-  
- # # #   R o o t   C a u s e  
- -   m e   w a s   a   G a m e P l a y e r   ( f r o m   g a m e . p l a y e r s )   n o t   a   P l a y e r S t a t e   ( f r o m   g a m e . s t a t e . p l a y e r s ) ,   s o   m e . c h i p s   a n d   m e . c a r d s   w e r e   u n d e f i n e d  
- -   R o o t   e l e m e n t   h a d   m i n - h - s c r e e n   c o v e r i n g   n a v b a r   a r e a  
- -   N o   e r r o r   b o u n d a r y   t o   c a t c h   r e n d e r   c r a s h e s  
- -   N o   v i s i b l e   l o a d i n g   s t a t e   w h e n   d a t a   w a s   m i s s i n g  
-  
- # # #   F i x e s  
- -   m e   n o w   r e s o l v e d   f r o m   g a m e S t a t e . p l a y e r s   ( P l a y e r S t a t e   w i t h   c h i p s / c a r d s )  
- -   A d d e d   E r r o r B o u n d a r y   a r o u n d   P o k e r T a b l e   i n   G a m e . t s x  
- -   R o o t   e l e m e n t   c h a n g e d   t o   m i n - h - [ c a l c ( 1 0 0 v h - 8 r e m ) ]   t o   n o t   c o v e r   n a v b a r  
- -   A d d e d   v i s i b l e   l o a d i n g   s p i n n e r   a n d   e r r o r   s t a t e  
- -   D e s k t o p   t a b l e   c o n t a i n e r :   a d d e d   m i n - h - [ 4 0 0 p x ]   t o   p r e v e n t   z e r o - h e i g h t   c o l l a p s e  
- -   t s c   - - n o E m i t   p a s s e s ,   b u i l d   p a s s e s  
+# #   P o k e r   F r o n t e n d   -   B u g   F i x :   F u l l - s c r e e n   f e l t   b a c k g r o u n d   ( D O N E ) 
+ 
+ 
+ 
+ # # #   R o o t   C a u s e 
+ 
+ -   m e   w a s   a   G a m e P l a y e r   ( f r o m   g a m e . p l a y e r s )   n o t   a   P l a y e r S t a t e   ( f r o m   g a m e . s t a t e . p l a y e r s ) ,   s o   m e . c h i p s   a n d   m e . c a r d s   w e r e   u n d e f i n e d 
+ 
+ -   R o o t   e l e m e n t   h a d   m i n - h - s c r e e n   c o v e r i n g   n a v b a r   a r e a 
+ 
+ -   N o   e r r o r   b o u n d a r y   t o   c a t c h   r e n d e r   c r a s h e s 
+ 
+ -   N o   v i s i b l e   l o a d i n g   s t a t e   w h e n   d a t a   w a s   m i s s i n g 
+ 
+ 
+ 
+ # # #   F i x e s 
+ 
+ -   m e   n o w   r e s o l v e d   f r o m   g a m e S t a t e . p l a y e r s   ( P l a y e r S t a t e   w i t h   c h i p s / c a r d s ) 
+ 
+ -   A d d e d   E r r o r B o u n d a r y   a r o u n d   P o k e r T a b l e   i n   G a m e . t s x 
+ 
+ -   R o o t   e l e m e n t   c h a n g e d   t o   m i n - h - [ c a l c ( 1 0 0 v h - 8 r e m ) ]   t o   n o t   c o v e r   n a v b a r 
+ 
+ -   A d d e d   v i s i b l e   l o a d i n g   s p i n n e r   a n d   e r r o r   s t a t e 
+ 
+ -   D e s k t o p   t a b l e   c o n t a i n e r :   a d d e d   m i n - h - [ 4 0 0 p x ]   t o   p r e v e n t   z e r o - h e i g h t   c o l l a p s e 
+ 
+ -   t s c   - - n o E m i t   p a s s e s ,   b u i l d   p a s s e s 
+ 
  
 ## Poker Frontend - Bug Fix: Full-screen felt background (DONE)
 
@@ -469,3 +484,89 @@ Response (200): GameResponse with state visible to requesting player
 - Frontend myPlayer found by current user id from auth store
 - All 19 poker tests pass, repro script shows correct turn alternation
 
+## Bug Fix: Poker Timer, Betting, UTC Timestamps & Seat Layout (DONE)
+
+### Evidence
+- Browser trace: the seat displayed 5s remaining while the server deadline was already 3.7s in the past; after a re-render the ring froze at 27s.
+- Raw `GET /api/games/{id}` for both players: `turn_deadline` and `server_time` ended in `Z`, but `created_at` / `started_at` were naive (no zone).
+- 3-user betting repro: all 30 legal actions returned HTTP 200. Failures came from the client (timer kept buttons enabled past the deadline; `openBetModal` read `GamePlayer.chips` = undefined and `bet` = buy-in instead of `PlayerState`).
+- Targeted API cases: wrong user 409, stale `turn_seq` 409, action after deadline 409, below-minimum 400, min/mid/max/all-in 200.
+
+### Root Causes & Fixes
+
+#### 1. Countdown re-anchored backwards on every render
+- **Cause**: `clockOffset` was recomputed on every render from a frozen `server_time` with a fresh `Date.now()`. Every tick moved the virtual clock backwards, so `remaining` grew or stalled.
+- **Fix**: `usePokerGame` recomputes the offset only when the `server_time` string changes. `remainingSeconds` = `turn_deadline - (Date.now() + offset)`. At 0 the value stays at 0 until `state_changed`; one refetch is issued after 2s if no event arrives. The timer stops when no player is on turn.
+- **Clock skew**: `frontend/src/lib/serverTime.ts` parses `Z`, `+00:00`, and naive timestamps as UTC, so a wrong client clock does not change the countdown.
+
+#### 2. Betting used stale/guessed values
+- **Cause**: Min/max were guessed in the UI; the modal read the wrong player object; `turn_seq=0` slipped through `if turn_seq`; in-flight state was not reset on 409; older GET responses could overwrite newer state.
+- **Fix**:
+  - Backend exposes `my_action_limits` (`min_bet_to`, `min_raise_to`, `max_bet_to`) and uses `int | None = None` for `turn_seq` with a strict comparison.
+  - UI sends the current `turn_seq`, converts amounts with `Number()`, clamps, and rounds to integers.
+  - Older GET responses are ignored by `turn_seq`; the in-flight flag is always reset.
+  - 409 triggers a silent refetch plus "Your turn expired"; the bet modal resets between turns.
+
+#### 3. Mixed naive/aware datetimes
+- **Cause**: Some serializers emitted naive datetimes, so the browser interpreted them in local time.
+- **Fix**: `backend/timeutils.py::to_utc_iso` emits one UTC ISO format with a zone (`Z` / `+00:00`), applied in `games.py`, `lobby.py`, and `wallet.py`. The frontend treats a missing zone as UTC.
+
+#### 4. Seat layout at 6-10 players
+- **Cause**: Equal-angle spacing bunches seats on the narrow sides of the ellipse; tall seats (badges + bet pill + status) then overlap. The heads-up seats also had a double offset.
+- **Fix**:
+  - Equal-arc spacing along the ellipse (not equal angle), so side seats get more vertical room.
+  - Compact seats for 6+ players: `xs` cards, tighter gaps, inline bet next to the stack, badge priority so the status row cannot wrap.
+  - Crowded tables use `min-h-[540px]` and `w-full max-w-6xl`; heads-up/3-player keep the regular seat size.
+  - Heads-up: me at (50%, 80%), opponent at (50%, 20%). Others clockwise on the ellipse edge.
+  - Timer and D/SB/BB badges share one fixed top row; no overlap and no off-screen ring.
+
+### Verification
+
+#### API tests (`backend/test_poker_api.py`)
+11 passed:
+- 3 users create/join/start, action ordering, BB option
+- wrong user 409, stale `turn_seq=0` 409, old `turn_seq` 409, action after deadline 409
+- min / mid / max / all-in 200, below-minimum 400
+- full hand to showdown
+
+#### Frontend unit tests (`frontend/src/lib/serverTime.test.ts`)
+8 passed: `Z`, `+00:00`, naive timestamps, and remaining math with a +5 minute client clock offset.
+
+#### Build / types
+- `npx tsc --noEmit`: pass
+- `npm run build`: pass
+- No separate lint script is defined in `frontend/package.json`.
+
+#### Full backend suite
+`pytest -q`: **5 failed, 32 passed, 1 error**. All failures/errors are the pre-existing manual live-server scripts:
+- `test_fixes.py::{test_websocket_broadcast, test_serializer, test_response_shape, test_money_tracking, test_user_login}`
+- `test_websocket_client.py::test_broadcast`
+
+These are not caused by this change and were left untouched.
+
+#### Layout measurements (desktop viewport 800x620)
+| Players | Table | Result |
+|---|---|---|
+| 2 | 712x434 | me (50,80) 153x167, opponent (50,20) 140x148; no overlaps, both inside |
+| 3 | 712x434 | me (50,80) 153x167, sides at y=33; no overlaps, all inside |
+| 6 | 712x540 | compact 112x113 (129 with status); no overlaps, none outside |
+| 10 | 712x540 | compact 112x113 (129 with status); no overlaps, none outside |
+
+Timer rings are 32px in regular seats and 24px in compact seats; both fit the fixed badge row (the ring ends 4px before the name). Bets are inline with the stack on every seat, so no separate pill adds height.
+
+Mobile at 380px (same-origin 380px iframe, `clientWidth` 372): mobile stacked layout active, 2-column Opponents grid, `scrollWidth` 372 = `clientWidth` after the navbar fix (no horizontal scroll).
+
+### Data-loss warning
+`backend/test_poker.py`, `backend/test_poker_group_c.py`, and `backend/test_rematch.py` clean up by deleting **all rows from the live `games` table** (there is no test-DB isolation). Do not run the full suite against a database that contains real games; use a disposable/test database. The layout/repro games in this environment were wiped by that cleanup.
+
+### Manual e2e checklist (Playwright is not installed)
+1. Three users create/join/start a poker game; the countdown ticks from 30 and resets on each action.
+2. Set the client clock 5 minutes off; the countdown still matches the server deadline.
+3. At 0 the timer holds; the next `state_changed` advances the turn; with no event, a refetch happens after 2s.
+4. Each user acts in turn (fold/check/call/bet/raise); min/max come from the server; below-minimum is rejected; all-in works.
+5. Act from a stale tab after the turn changed: verify 409, "Your turn expired", refetch, and no stuck spinner.
+6. Try to act out of turn: verify 409 and no state corruption.
+7. Refresh mid-hand: same cards, stack, turn, and countdown; no duplicate timers.
+8. Desktop 2/3/6/10: no seat/badge/timer overlap; me bottom center; others clockwise.
+9. 380px: stacked layout, 2-column Opponents grid, no horizontal scroll.
+10. Finish a hand to showdown; verify result modal and rematch still work.

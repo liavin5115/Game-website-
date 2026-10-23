@@ -1,9 +1,10 @@
 """Game endpoints - create, join, action, state"""
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from database import get_db
 from auth import get_current_user, get_current_user_optional
@@ -11,8 +12,10 @@ from models import User, Game, GameStatus, GameType, GameSession
 from services.game_manager import GameManager
 from games import get_game_metadata
 from websocket.manager import manager
+from timeutils import to_utc_iso
 
 router = APIRouter(prefix="/games", tags=["games"])
+logger = logging.getLogger(__name__)
 
 
 class CreateGameRequest(BaseModel):
@@ -28,7 +31,8 @@ class ActionRequest(BaseModel):
     game_id: int
     action: str
     amount: int = 0
-    turn_seq: int = 0
+    # Optional so legacy/internal callers can omit it; clients should always send it.
+    turn_seq: Optional[int] = None
 
 
 class LeaveGameRequest(BaseModel):
@@ -57,6 +61,7 @@ class GameResponse(BaseModel):
     state: dict
     current_turn_user_id: Optional[int]
     my_valid_actions: list[str]
+    my_action_limits: Optional[dict] = None
     created_at: str
     started_at: Optional[str]
     finished_at: Optional[str]
@@ -240,6 +245,7 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     # Get current turn and valid actions for in_progress games
     current_turn_user_id = None
     my_valid_actions = []
+    my_action_limits = None
     turn_seq = state_dict.get("metadata", {}).get("turn_seq", 0)
 
     if game.status.value == "in_progress" and state_dict:
@@ -256,8 +262,28 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
                 game_class = get_game_class(game.game_type.value)
                 game_instance = game_class.from_json(game.state, game.buy_in, players_data)
                 my_valid_actions = game_instance.get_valid_actions(user_id)
-            except:
-                pass
+            except Exception:
+                logger.exception(
+                    "Failed to compute valid actions for game %s, user %s",
+                    game.id,
+                    user_id,
+                )
+
+            # Server-authoritative bet limits for the UI (never guess on the client).
+            me_state = next((p for p in players_state if p.get("id") == user_id), None)
+            if me_state is not None:
+                chips = int(me_state.get("chips", 0) or 0)
+                bet = int(me_state.get("bet", 0) or 0)
+                max_to = max(0, chips + bet)
+                min_raise = int(state_dict.get("min_raise", 0) or 0)
+                current_bet = int(state_dict.get("current_bet", 0) or 0)
+                min_bet_to = min(max_to, max(1, min_raise))
+                min_raise_to = min(max_to, current_bet + max(1, min_raise))
+                my_action_limits = {
+                    "min_bet_to": min_bet_to,
+                    "min_raise_to": min_raise_to,
+                    "max_bet_to": max_to,
+                }
 
     return {
         "id": game.id,
@@ -273,14 +299,15 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
         "state": state_dict,
         "current_turn_user_id": current_turn_user_id,
         "my_valid_actions": my_valid_actions,
-        "created_at": game.created_at.isoformat() if game.created_at else "",
-        "started_at": game.started_at.isoformat() if game.started_at else None,
-        "finished_at": game.finished_at.isoformat() if game.finished_at else None,
+        "my_action_limits": my_action_limits,
+        "created_at": to_utc_iso(game.created_at) or "",
+        "started_at": to_utc_iso(game.started_at),
+        "finished_at": to_utc_iso(game.finished_at),
         "next_game_id": next_game_id,
-        "turn_deadline": game.turn_deadline.isoformat() + "Z" if game.turn_deadline else None,
+        "turn_deadline": to_utc_iso(game.turn_deadline),
         "turn_seq": turn_seq,
-        "server_time": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "turn_seconds": settings.TURN_SECONDS,
+        "server_time": to_utc_iso(datetime.now(timezone.utc)),
+        "turn_seconds": settings.POKER_TURN_SECONDS if game.game_type == GameType.POKER else settings.TURN_SECONDS,
     }
 
 
@@ -314,5 +341,5 @@ def game_to_list_response(game: Game, db: Session) -> dict:
         "max_players": metadata.get("max_players", 2),
         "min_players": metadata.get("min_players", 2),
         "players": players,
-        "created_at": game.created_at.isoformat() if game.created_at else "",
+        "created_at": to_utc_iso(game.created_at) or "",
     }

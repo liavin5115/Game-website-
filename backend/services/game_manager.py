@@ -306,7 +306,7 @@ class GameManager:
             for s in sessions
         ]
 
-    async def apply_action(self, game_id: int, user_id: int, action_type: str, amount: int = 0, turn_seq: int = 0) -> Game:
+    async def apply_action(self, game_id: int, user_id: int, action_type: str, amount: int = 0, turn_seq: int | None = None) -> Game:
         game = self.db.query(Game).filter(Game.id == game_id).with_for_update().first()
         if not game:
             raise ValueError("Game not found")
@@ -322,8 +322,9 @@ class GameManager:
         metadata = state_dict.get("metadata", {})
         current_turn_seq = metadata.get("turn_seq", 0)
 
-        # Race safety: reject stale turn_seq
-        if turn_seq and turn_seq != current_turn_seq:
+        # Race safety: reject stale turn_seq. None means the caller omitted it
+        # (legacy/internal); any provided value must match exactly, including 0.
+        if turn_seq is not None and turn_seq != current_turn_seq:
             raise ValueError("Turn expired")
 
         # Lazy deadline check - apply timeout if expired

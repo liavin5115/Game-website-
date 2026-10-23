@@ -8,6 +8,7 @@ from auth import get_current_user
 from models import User, Transaction, TransactionType
 from services.wallet import WalletService
 from config import get_settings
+from timeutils import to_utc_iso
 
 router = APIRouter(prefix="/wallet", tags=["wallet"])
 settings = get_settings()
@@ -68,7 +69,7 @@ def get_transactions(
             "balance_after": t.balance_after,
             "description": t.description,
             "reference_id": t.reference_id,
-            "created_at": t.created_at.isoformat(),
+            "created_at": to_utc_iso(t.created_at),
         }
         for t in txs
     ]

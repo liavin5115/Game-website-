@@ -4,7 +4,7 @@ import { ReactNode } from 'react';
 interface CardProps {
   card: string;
   faceDown?: boolean;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'xs' | 'sm' | 'md' | 'lg';
   className?: string;
   children?: ReactNode;
 }
@@ -22,6 +22,7 @@ const suitDisplay: Record<string, { symbol: string }> = {
 };
 
 const sizes = {
+  xs: { width: 'w-7', height: 'h-10', font: 'text-[8px]', center: 'text-sm', padding: 'p-0' },
   sm: { width: 'w-10', height: 'h-14', font: 'text-[10px]', center: 'text-lg', padding: 'p-0.5' },
   md: { width: 'w-16', height: 'h-22', font: 'text-xs', center: 'text-2xl', padding: 'p-1' },
   lg: { width: 'w-20', height: 'h-28', font: 'text-sm', center: 'text-3xl', padding: 'p-1.5' },

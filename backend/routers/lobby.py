@@ -9,6 +9,7 @@ from auth import get_current_user_optional
 from models import User, Game, GameStatus, GameType
 from services.game_manager import GameManager
 from games import get_game_metadata
+from timeutils import to_utc_iso
 
 router = APIRouter(prefix="/lobby", tags=["lobby"])
 
@@ -61,7 +62,7 @@ def list_lobby_games(
             "max_players": metadata.get("max_players", 2),
             "min_players": metadata.get("min_players", 2),
             "players": players,
-            "created_at": game.created_at.isoformat() if game.created_at else "",
+            "created_at": to_utc_iso(game.created_at) or "",
         })
     return result
 

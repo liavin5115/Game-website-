@@ -45,9 +45,9 @@ function ChipPill({ amount }: { amount: number }) {
   );
 }
 
-function Badge({ children, className = '', title }: { children: React.ReactNode; className?: string; title?: string }) {
+function Badge({ children, className = '', title, compact = false }: { children: React.ReactNode; className?: string; title?: string; compact?: boolean }) {
   return (
-    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${className}`} title={title}>
+    <span className={`inline-flex items-center rounded font-medium ${compact ? 'px-1 py-0 text-[9px] leading-4' : 'px-1.5 py-0.5 text-[10px]'} ${className}`} title={title}>
       {children}
     </span>
   );
@@ -119,6 +119,11 @@ function PlayerSeat({
   autoActed,
   connected,
   isShowdown,
+  showTimer,
+  remaining,
+  turnSeconds,
+  isLowTime,
+  compact = false,
 }: {
   player: any;
   isMe: boolean;
@@ -130,47 +135,64 @@ function PlayerSeat({
   autoActed: boolean;
   connected: boolean;
   isShowdown: boolean;
+  showTimer?: boolean;
+  remaining?: number;
+  turnSeconds?: number;
+  isLowTime?: boolean;
+  compact?: boolean;
 }) {
   const showCards = isMe || status === 'showdown' || isShowdown;
   const isFolded = status === 'folded';
   const isAllIn = status === 'allin' || status === 'all_in';
   const isAway = status === 'away';
+  const cardSize = compact ? 'xs' : 'sm';
 
   return (
     <div
-      className={`flex flex-col items-center gap-1.5 transition-all duration-200 ${
+      className={`flex flex-col items-center transition-all duration-200 ${
+        compact ? 'min-w-[112px] gap-1' : 'min-w-[140px] gap-1.5'
+      } ${
         isCurrentTurn ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900' : ''
       }`}
     >
-      {/* Top badges row */}
-      <div className="flex items-center gap-1">
+      {/* Top badges row: fixed slot so the timer never shifts the name */}
+      <div className={`flex items-center gap-0.5 w-full justify-center ${compact ? 'h-6' : 'min-h-[32px] gap-1'}`}>
         {isDealer && (
-          <Badge className="bg-white text-gray-900 border border-gray-300 dark:bg-gray-800 dark:text-white dark:border-gray-600" title="Dealer">
+          <Badge compact={compact} className="bg-white text-gray-900 border border-gray-300 dark:bg-gray-800 dark:text-white dark:border-gray-600" title="Dealer">
             D
           </Badge>
         )}
-        {isSB && <Badge className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300" title="Small Blind">SB</Badge>}
-        {isBB && <Badge className="bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300" title="Big Blind">BB</Badge>}
+        {isSB && <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300" title="Small Blind">SB</Badge>}
+        {isBB && <Badge compact={compact} className="bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300" title="Big Blind">BB</Badge>}
+        {showTimer && (
+          <TimerRing
+            remaining={remaining ?? 0}
+            totalSeconds={turnSeconds ?? 30}
+            isLowTime={isLowTime ?? false}
+            size={compact ? 'sm' : 'md'}
+            className={`flex-shrink-0 ${compact ? 'ml-1' : 'ml-2'}`}
+          />
+        )}
       </div>
 
       {/* Name and (You) */}
-      <div className="flex items-center gap-1.5 text-center">
-        <span className="font-medium text-gray-900 dark:text-white truncate max-w-[120px]">
+      <div className="flex items-center gap-1 text-center">
+        <span className={`font-medium text-gray-900 dark:text-white truncate ${compact ? 'text-xs max-w-[86px]' : 'text-sm max-w-[120px]'}`}>
           {player.username}
         </span>
         {isMe && (
-          <Badge className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 ml-1 flex-shrink-0">
+          <Badge compact={compact} className="bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 flex-shrink-0">
             You
           </Badge>
         )}
       </div>
 
       {/* Cards */}
-      <div className="flex gap-1 min-h-[56px] items-end">
+      <div className={`flex gap-0.5 items-end ${compact ? 'min-h-[40px]' : 'min-h-[56px]'}`}>
         {isFolded && !isShowdown ? (
-          <div className="flex gap-1 opacity-40">
-            <Card card="??" faceDown size="sm" />
-            <Card card="??" faceDown size="sm" />
+          <div className="flex gap-0.5 opacity-40">
+            <Card card="??" faceDown size={cardSize} />
+            <Card card="??" faceDown size={cardSize} />
           </div>
         ) : (
           player.cards.map((card: string, i: number) => (
@@ -178,31 +200,31 @@ function PlayerSeat({
               key={i}
               card={showCards && card !== '??' ? card : '??'}
               faceDown={!showCards || card === '??'}
-              size="sm"
+              size={cardSize}
             />
           ))
         )}
       </div>
 
-      {/* Stack */}
-      <div className="text-xs font-mono font-semibold text-gray-900 dark:text-white">
-        {player.chips.toLocaleString()}
+      {/* Stack and current bet on one line: no separate pill to overlap or
+          add height. The bet stays visible as a secondary value. */}
+      <div className={`flex items-baseline gap-1 font-mono font-semibold text-gray-900 dark:text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
+        <span>{player.chips.toLocaleString()}</span>
+        {player.bet > 0 && (
+          <span className="text-yellow-600 dark:text-yellow-400 font-normal">· {player.bet}</span>
+        )}
       </div>
 
-      {/* Current bet as chip pill */}
-      {player.bet > 0 && (
-        <ChipPill amount={player.bet} />
-      )}
-
-      {/* Status badges */}
-      <div className="flex flex-wrap items-center justify-center gap-1">
-        {isFolded && <Badge className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
-        {isAllIn && <Badge className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
-        {isAway && <Badge className={STATUS_BADGE_STYLES.away}>Away</Badge>}
-        {!connected && !isMe && <Badge className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
-        {autoActed && <Badge className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
+      {/* Status badges: at most one secondary status in compact mode so the
+          row never wraps and grows into the seat below. */}
+      <div className="flex flex-wrap items-center justify-center gap-0.5">
+        {isFolded && <Badge compact={compact} className={STATUS_BADGE_STYLES.folded}>Folded</Badge>}
+        {isAllIn && <Badge compact={compact} className={STATUS_BADGE_STYLES.allin}>All-in</Badge>}
+        {!connected && !isMe && <Badge compact={compact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
+        {isAway && (connected || !compact) && <Badge compact={compact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
+        {autoActed && !isAway && <Badge compact={compact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
         {isCurrentTurn && !isFolded && !isAllIn && !isAway && (
-          <Badge className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
+          <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
         )}
       </div>
     </div>
@@ -276,18 +298,24 @@ function TimerRing({
   remaining,
   totalSeconds,
   isLowTime,
+  className = '',
+  size = 'md',
 }: {
   remaining: number;
   totalSeconds: number;
   isLowTime: boolean;
+  className?: string;
+  size?: 'sm' | 'md';
 }) {
   const radius = 28;
   const circumference = 2 * Math.PI * radius;
   const progress = totalSeconds > 0 ? Math.max(0, Math.min(1, remaining / totalSeconds)) : 0;
   const strokeDashoffset = circumference * (1 - progress);
+  const box = size === 'sm' ? 'w-6 h-6' : 'w-8 h-8';
+  const textSize = size === 'sm' ? 'text-[8px]' : 'text-[10px]';
 
   return (
-    <div className="relative w-16 h-16 flex items-center justify-center">
+    <div className={`relative ${box} flex items-center justify-center ${className}`}>
       <svg className="w-full h-full -rotate-90" viewBox="0 0 64 64">
         <circle
           cx="32"
@@ -312,7 +340,7 @@ function TimerRing({
           style={{ filter: 'dropShadow(0 2px 4px rgba(0,0,0,0.2))' }}
         />
       </svg>
-      <span className={`absolute text-center font-mono font-bold text-xs ${isLowTime ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
+      <span className={`absolute text-center font-mono font-bold ${textSize} ${isLowTime ? 'text-red-600' : 'text-gray-900 dark:text-white'}`}>
         {remaining}s
       </span>
     </div>
@@ -419,16 +447,22 @@ function BetRaiseModal({
   onConfirm: () => void;
   disabled: boolean;
 }) {
-  const clampedAmount = Math.max(minAmount, Math.min(maxAmount, amount));
+  const safeMin = Math.max(0, Math.ceil(Number(minAmount) || 0));
+  const safeMax = Math.max(0, Math.floor(Number(maxAmount) || 0));
+  const hasRange = safeMax > 0 && safeMax >= safeMin;
+  const clampedAmount = hasRange
+    ? Math.max(safeMin, Math.min(safeMax, Math.trunc(Number(amount) || 0)))
+    : safeMin;
+  const confirmDisabled = disabled || !hasRange;
   const halfPot = Math.floor(pot / 2);
   const isRaise = actionType === 'raise';
   const label = isRaise ? 'Raise to' : 'Bet';
 
   const quickButtons = [
-    { label: 'Min', value: minAmount },
-    { label: 'Half Pot', value: Math.max(minAmount, Math.min(maxAmount, halfPot)) },
-    { label: 'Pot', value: Math.max(minAmount, Math.min(maxAmount, pot)) },
-    { label: 'All-in', value: maxAmount },
+    { label: 'Min', value: safeMin, disabled: !hasRange },
+    { label: 'Half Pot', value: Math.max(safeMin, Math.min(safeMax, halfPot)), disabled: !hasRange },
+    { label: 'Pot', value: Math.max(safeMin, Math.min(safeMax, pot)), disabled: !hasRange },
+    { label: 'All-in', value: safeMax, disabled: !hasRange },
   ];
 
   return (
@@ -436,33 +470,38 @@ function BetRaiseModal({
       <div className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-            {label} (min {minAmount.toLocaleString()}, max {maxAmount.toLocaleString()})
+            {label} (min {safeMin.toLocaleString()}, max {safeMax.toLocaleString()})
           </label>
+          {!hasRange && (
+            <p className="mb-2 text-sm text-red-600 dark:text-red-400">
+              No legal {actionType} amount for your stack. Call, check, or fold instead.
+            </p>
+          )}
           <div className="relative">
             <input
               type="range"
-              min={minAmount}
-              max={maxAmount}
+              min={safeMin}
+              max={hasRange ? safeMax : safeMin}
               step={1}
               value={clampedAmount}
-              onChange={(e) => setAmount(Number(e.target.value))}
+              onChange={(e) => setAmount(Math.trunc(Number(e.target.value)))}
               className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
-              disabled={disabled}
+              disabled={disabled || !hasRange}
             />
             <div className="absolute bottom-full left-0 right-0 flex justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
-              <span>{minAmount.toLocaleString()}</span>
-              <span>{maxAmount.toLocaleString()}</span>
+              <span>{safeMin.toLocaleString()}</span>
+              <span>{safeMax.toLocaleString()}</span>
             </div>
           </div>
           <div className="mt-2 flex items-center gap-2">
             <Input
               type="number"
               value={clampedAmount}
-              onChange={(e) => setAmount(Math.max(minAmount, Math.min(maxAmount, Number(e.target.value) || 0)))}
-              min={minAmount}
-              max={maxAmount}
+              onChange={(e) => setAmount(Math.max(safeMin, Math.min(safeMax, Math.trunc(Number(e.target.value) || 0))))}
+              min={safeMin}
+              max={safeMax}
               className="w-32"
-              disabled={disabled}
+              disabled={disabled || !hasRange}
             />
             <span className="text-sm text-gray-500 dark:text-gray-400">Total bet</span>
           </div>
@@ -474,8 +513,8 @@ function BetRaiseModal({
               key={btn.label}
               variant="secondary"
               size="sm"
-              onClick={() => setAmount(btn.value)}
-              disabled={disabled || btn.value === clampedAmount}
+              onClick={() => setAmount(Math.trunc(btn.value))}
+              disabled={disabled || !hasRange || btn.value === clampedAmount}
             >
               {btn.label}
             </Button>
@@ -486,7 +525,7 @@ function BetRaiseModal({
           <Button variant="secondary" onClick={onClose} className="flex-1" disabled={disabled}>
             Cancel
           </Button>
-          <Button onClick={onConfirm} loading={disabled} className="flex-1" disabled={disabled}>
+          <Button onClick={onConfirm} loading={disabled} className="flex-1" disabled={confirmDisabled}>
             {label} {clampedAmount.toLocaleString()}
           </Button>
         </div>
@@ -770,21 +809,45 @@ export function PokerTableDisplay({
     return order;
   }, [mySeat, numPlayers]);
 
-  // Calculate seat positions for desktop (ellipse)
+  // Calculate seat positions for desktop. Seats are spaced by equal *arc
+  // length*, not equal angle: equal angles bunch seats together on the
+  // narrow sides of the ellipse and make them overlap at 6-10 players.
   const seatPositions = useMemo(() => {
-    const positions: { x: number; y: number; angle: number }[] = [];
+    const n = Math.max(1, numPlayers);
+    const positions: { x: number; y: number; angle: number }[] = new Array(n);
     const rx = 42;
-    const ry = 30;
+    const ry = n >= 9 ? 36 : n >= 6 ? 34 : 30;
     const centerX = 50;
     const centerY = 50;
+    const SAMPLES = 720;
 
-    for (let i = 0; i < numPlayers; i++) {
-      const displayIndex = seatOrder.indexOf(i);
-      const angle = -90 + (displayIndex / numPlayers) * 360;
+    const samples: { s: number; x: number; y: number; angle: number }[] = [];
+    let total = 0;
+    let prevX = 0;
+    let prevY = 0;
+    for (let k = 0; k <= SAMPLES; k++) {
+      const angle = 90 + (360 * k) / SAMPLES;
       const rad = (angle * Math.PI) / 180;
       const x = centerX + rx * Math.cos(rad);
       const y = centerY + ry * Math.sin(rad);
-      positions.push({ x, y, angle });
+      if (k > 0) total += Math.hypot(x - prevX, y - prevY);
+      samples.push({ s: total, x, y, angle });
+      prevX = x;
+      prevY = y;
+    }
+
+    for (let i = 0; i < n; i++) {
+      const displayIndex = seatOrder.indexOf(i);
+      const target = (total * displayIndex) / n;
+      let lo = 0;
+      let hi = samples.length - 1;
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        if (samples[mid].s < target) lo = mid + 1;
+        else hi = mid;
+      }
+      const p = samples[lo];
+      positions[i] = { x: p.x, y: p.y, angle: p.angle };
     }
     return positions;
   }, [numPlayers, seatOrder]);
@@ -811,7 +874,7 @@ export function PokerTableDisplay({
 
       {/* Desktop: Oval Table Layout */}
       <div className="hidden md:block relative">
-        <div className="max-w-6xl mx-auto aspect-[3/2] min-h-[400px] max-h-[70vh] relative">
+        <div className={`w-full max-w-6xl mx-auto aspect-[3/2] relative ${numPlayers >= 6 ? 'min-h-[540px]' : 'min-h-[400px] max-h-[70vh]'}`}>
           {/* Felt table background */}
           <div className="absolute inset-0 rounded-[50%] bg-gradient-to-br from-felt-700 via-felt-600 to-felt-800 border-4 border-felt-900 shadow-2xl overflow-hidden">
             <div className="absolute inset-0 opacity-5" style={{
@@ -852,9 +915,9 @@ export function PokerTableDisplay({
                 key={player.id}
                 className="absolute pointer-events-auto z-10"
                 style={{
-                  left: `calc(${pos.x}% - 80px)`,
-                  top: `calc(${pos.y}% - 60px)`,
-                  transform: `translate(-50%, -50%)`,
+                  left: `${pos.x}%`,
+                  top: `${pos.y}%`,
+                  transform: 'translate(-50%, -50%)',
                 }}
               >
                 <PlayerSeat
@@ -868,13 +931,12 @@ export function PokerTableDisplay({
                   autoActed={autoActed}
                   connected={connected}
                   isShowdown={isShowdown}
+                  showTimer={isCurrent && game.status === 'in_progress'}
+                  remaining={remaining}
+                  turnSeconds={turnSeconds}
+                  isLowTime={isLowTime}
+                  compact={numPlayers >= 6}
                 />
-                {/* Timer ring on active seat */}
-                {isCurrent && game.status === 'in_progress' && (
-                  <div className="absolute -top-8 left-1/2 -translate-x-1/2">
-                    <TimerRing remaining={remaining} totalSeconds={turnSeconds} isLowTime={isLowTime} />
-                  </div>
-                )}
               </div>
             );
           })}

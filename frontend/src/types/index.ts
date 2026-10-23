@@ -48,6 +48,11 @@ export interface Game {
   players?: GamePlayer[];
   current_turn_user_id?: number;
   my_valid_actions?: string[];
+  my_action_limits?: {
+    min_bet_to: number;
+    min_raise_to: number;
+    max_bet_to: number;
+  } | null;
 }
 
 export interface GameState {
