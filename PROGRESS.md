@@ -1,4 +1,4 @@
-# Game Platform Progress Checklist
+﻿# Game Platform Progress Checklist
 
 ## Backend
 - [DONE] Broadcasts of state_changed after create/join/leave/start/action in game_manager.py (+ lobby update)
@@ -52,7 +52,7 @@
 - [DONE] Cryptographic SystemRandom RNG and deck reshuffle in from_json (fixes deterministic card draw bug)
 - [DONE] Safe deck draw with reshuffle if exhausted
 - [DONE] Dealer natural check in start_game for instant resolution & settlement
-- [DONE] Added UI rules indicator in Blackjack table ("Dealer hits soft 17 • Blackjack pays 3:2")
+- [DONE] Added UI rules indicator in Blackjack table ("Dealer hits soft 17 â€¢ Blackjack pays 3:2")
 - [DONE] Fixed auth redirect loop between /lobby and /login (verified auth state on load, single logout on 401, preserved /auth/login error handling, unauthenticated polling guards)
 - [DONE] Configured stable SECRET_KEY loading from .env with explicit 401 error reasons (Token expired, Invalid token, User not found)
 - [DONE] Fixed Wallet Stats: SQL aggregates based on finished game sessions (games_played, wins, losses, pushes, win_rate, total_won, total_lost, net, biggest_win), excluded non-game transactions and left games
@@ -129,7 +129,7 @@
 - [DONE] Uncontested pot (single active): no cards revealed
 
 ## Poker Group A - Step 3: Player Count (DONE)
-- [DONE] max_players 6 → 10 in GAME_METADATA (games/__init__.py)
+- [DONE] max_players 6 â†’ 10 in GAME_METADATA (games/__init__.py)
 - [DONE] Verified not stored in DB rows or seed data
 - [DONE] Seat assignment uses position 0-9 (GameSession.position)
 - [DONE] Blackjack unchanged (max_players=4)
@@ -197,15 +197,15 @@
 ### Endpoints
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | /api/games/create | ✅ | Create poker game, deduct buy-in |
-| POST | /api/games/join | ✅ | Join waiting game, deduct buy-in |
-| POST | /api/games/leave | ✅ | Leave waiting game, refund |
-| POST | /api/games/start | ✅ | Host starts (min 2 players) |
-| POST | /api/games/action | ✅ | Player action (fold/check/call/bet/raise) |
-| POST | /api/games/rematch | ✅ | Idempotent rematch |
+| POST | /api/games/create | âœ… | Create poker game, deduct buy-in |
+| POST | /api/games/join | âœ… | Join waiting game, deduct buy-in |
+| POST | /api/games/leave | âœ… | Leave waiting game, refund |
+| POST | /api/games/start | âœ… | Host starts (min 2 players) |
+| POST | /api/games/action | âœ… | Player action (fold/check/call/bet/raise) |
+| POST | /api/games/rematch | âœ… | Idempotent rematch |
 | GET | /api/games/{id} | Optional | Full state (opponent cards hidden) |
-| GET | /api/games/active/me | ✅ | Current user's active/waiting game |
-| GET | /api/lobby/games | ❌ | List waiting poker games |
+| GET | /api/games/active/me | âœ… | Current user's active/waiting game |
+| GET | /api/lobby/games | âŒ | List waiting poker games |
 
 ### Request/Response JSON
 
@@ -393,45 +393,45 @@ Response (200): GameResponse with state visible to requesting player
 ## Poker Frontend - Part 3 (DONE)
 
 ### Action Bar, Results, Rematch, Full Test
-- [DONE] ACTION BAR: Fixed at bottom (mobile), desktop bar. Fold, Check/Call {amount}, Bet, Raise buttons. Only shows server-valid actions, disabled with reason. Enabled only on my turn, disabled while request in flight and while disconnected. turn_seq sent with each action. 409 → silent refetch + toast.
-- [DONE] BET/RAISE CONTROL: Slider + number input using server min/max, quick buttons (Min, ½ Pot, Pot, All-in), amount clamped, converted with Number(), touch-friendly. Confirm button "Raise to {amount}".
+- [DONE] ACTION BAR: Fixed at bottom (mobile), desktop bar. Fold, Check/Call {amount}, Bet, Raise buttons. Only shows server-valid actions, disabled with reason. Enabled only on my turn, disabled while request in flight and while disconnected. turn_seq sent with each action. 409 â†’ silent refetch + toast.
+- [DONE] BET/RAISE CONTROL: Slider + number input using server min/max, quick buttons (Min, Â½ Pot, Pot, All-in), amount clamped, converted with Number(), touch-friendly. Confirm button "Raise to {amount}".
 - [DONE] FOLD CONFIRMATION: Fold that would be free check shows confirm step.
 - [DONE] SHOWDOWN AND RESULT: Winners highlighted, revealed cards for showdown players, result + payout from server ("+85", "-20", "Split +40"). Uncontested pot shows winner without cards. Balance refreshes.
-- [DONE] FINISHED PANEL: "Play Again ({buy_in} pts)" with rematch (disabled with reason when balance too low, "Join Rematch" when next_game_id exists, 409 → message + "Back to lobby") and "Back to Lobby".
+- [DONE] FINISHED PANEL: "Play Again ({buy_in} pts)" with rematch (disabled with reason when balance too low, "Join Rematch" when next_game_id exists, 409 â†’ message + "Back to lobby") and "Back to Lobby".
 - [DONE] RESUME AND RECONNECT: Refresh mid-hand rebuilds table/timer/cards from server; active-game banner/redirect works for poker; finished-while-away shows finished panel.
 - [DONE] RULES PANEL: Collapsible "Rules" panel (blinds buy_in//20 and half, no rake, leftover refunded, 30s/turn, timeout = check or fold).
 - [DONE] tsc --noEmit passes, build passes, no temporary logs or dev preview route.
-# #   P o k e r   F r o n t e n d   -   B u g   F i x :   F u l l - s c r e e n   f e l t   b a c k g r o u n d   ( D O N E ) 
- 
- 
- 
- # # #   R o o t   C a u s e 
- 
- -   m e   w a s   a   G a m e P l a y e r   ( f r o m   g a m e . p l a y e r s )   n o t   a   P l a y e r S t a t e   ( f r o m   g a m e . s t a t e . p l a y e r s ) ,   s o   m e . c h i p s   a n d   m e . c a r d s   w e r e   u n d e f i n e d 
- 
- -   R o o t   e l e m e n t   h a d   m i n - h - s c r e e n   c o v e r i n g   n a v b a r   a r e a 
- 
- -   N o   e r r o r   b o u n d a r y   t o   c a t c h   r e n d e r   c r a s h e s 
- 
- -   N o   v i s i b l e   l o a d i n g   s t a t e   w h e n   d a t a   w a s   m i s s i n g 
- 
- 
- 
- # # #   F i x e s 
- 
- -   m e   n o w   r e s o l v e d   f r o m   g a m e S t a t e . p l a y e r s   ( P l a y e r S t a t e   w i t h   c h i p s / c a r d s ) 
- 
- -   A d d e d   E r r o r B o u n d a r y   a r o u n d   P o k e r T a b l e   i n   G a m e . t s x 
- 
- -   R o o t   e l e m e n t   c h a n g e d   t o   m i n - h - [ c a l c ( 1 0 0 v h - 8 r e m ) ]   t o   n o t   c o v e r   n a v b a r 
- 
- -   A d d e d   v i s i b l e   l o a d i n g   s p i n n e r   a n d   e r r o r   s t a t e 
- 
- -   D e s k t o p   t a b l e   c o n t a i n e r :   a d d e d   m i n - h - [ 4 0 0 p x ]   t o   p r e v e n t   z e r o - h e i g h t   c o l l a p s e 
- 
- -   t s c   - - n o E m i t   p a s s e s ,   b u i l d   p a s s e s 
- 
- 
+## Poker Frontend - Bug Fix: Full-screen felt background (DONE)
+
+
+
+### Root Cause
+
+- me was a GamePlayer (from game.players) not a PlayerState (from game.state.players), so me.chips and me.cards were undefined
+
+- Root element had min-h-screen covering navbar area
+
+- No error boundary to catch render crashes
+
+- No visible loading state when data was missing
+
+
+
+### Fixes
+
+- me now resolved from gameState.players (PlayerState with chips/cards)
+
+- Added ErrorBoundary around PokerTable in Game.tsx
+
+- Root element changed to min-h-[calc(100vh-8rem)] to not cover navbar
+
+- Added visible loading spinner and error state
+
+- Desktop table container: added min-h-[400px] to prevent zero-height collapse
+
+- tsc --noEmit passes, build passes
+
+
 ## Poker Frontend - Bug Fix: Full-screen felt background (DONE)
 
 ### Root Cause
@@ -678,10 +678,11 @@ Visual-only fix for the countdown timer overlapping the D/SB/BB badge row on des
 - Badge row (D, SB, BB) keeps one fixed slot per seat, holds up to 3 badges without wrapping or touching anything
 
 **Files:**
-- rontend/src/components/games/poker/PokerTableDisplay.tsx: new SEAT_METRICS (me 152x183 md, opp 118x148 sm), PlayerSeat rebuilt with per-row fixed heights, timer bar + seconds in status row
-- rontend/src/lib/pokerTableLayout.ts: per-seat sizing (mySeatW/mySeatH, imMargin), equal-arc spacing still holds
-- rontend/src/lib/pokerOverlapCheck.ts: owner-aware pairs (same-seat gap>=0, cross-seat >=16px), added timer/cards/stack selectors
-- rontend/src/lib/pokerTableLayout.test.ts: updated with real seat geometry, 7 tests pass
+- frontend/src/components/games/poker/PokerTableDisplay.tsx: new SEAT_METRICS (me 152x183 md, opp 118x148 sm), PlayerSeat rebuilt with per-row fixed heights, timer bar + seconds in status row
+- frontend/src/lib/pokerTableLayout.ts: per-seat sizing (mySeatW/mySeatH, 
+imMargin), equal-arc spacing still holds
+- frontend/src/lib/pokerOverlapCheck.ts: owner-aware pairs (same-seat gap>=0, cross-seat >=16px), added timer/cards/stack selectors
+- frontend/src/lib/pokerTableLayout.test.ts: updated with real seat geometry, 7 tests pass
 
 **Verification:**
 - 
@@ -693,3 +694,4 @@ px vitest run -> 23 passed (4 test files)
 - window.__pokerOverlapCheck() -> 0 violations (checked at finished state, badge row + timer + cards + stack + center + actionbar all clear)
 
 @
+
