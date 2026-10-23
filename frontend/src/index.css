@@ -108,6 +108,21 @@
   }
 
   /* Card flip animation */
+  @keyframes pokerCardReveal {
+    from { opacity: 0.35; transform: rotateY(90deg) scale(0.92); }
+    to { opacity: 1; transform: rotateY(0deg) scale(1); }
+  }
+
+  .poker-card-flip {
+    animation: pokerCardReveal 200ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .poker-card-flip {
+      animation: none;
+    }
+  }
+
   .perspective-1000 {
     perspective: 1000px;
   }

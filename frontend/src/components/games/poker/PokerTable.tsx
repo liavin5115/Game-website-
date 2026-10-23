@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { usePokerGame } from '../../../hooks/usePokerGame';
+import { usePokerReveal } from '../../../hooks/usePokerReveal';
 import { gamesApi } from '../../../api/client';
 import { PokerTableDisplay, type PokerTableDisplayProps } from './PokerTableDisplay';
 import { authApi } from '../../../api/client';
@@ -26,6 +27,9 @@ export function PokerTable({ gameId }: { gameId: number }) {
     isActionPending,
     refetch,
   } = usePokerGame({ gameId });
+
+  // Must be above every early return in this component.
+  const reveal = usePokerReveal(game, clockOffset);
 
   const [remaining, setRemaining] = useState(0);
   const [actionError, setActionError] = useState('');
@@ -228,9 +232,10 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const mySeat = 0; // PlayerState doesn't have seat; "me" is always at bottom (seat 0 in display)
   const numPlayers = players.length;
 
-  // Find current turn player
-  const currentTurnIdx = gameState?.current_player ?? 0;
-  const currentTurnPlayer = players[currentTurnIdx];
+  // Find current turn player. Finished hands have no turn, even if an old
+  // snapshot still carries a stale current_player index.
+  const currentTurnIdx = game?.status === 'finished' ? -1 : (gameState?.current_player ?? 0);
+  const currentTurnPlayer = currentTurnIdx >= 0 ? players[currentTurnIdx] : undefined;
   const currentTurnPlayerName = currentTurnPlayer?.username;
 
   const turnSeconds = game?.turn_seconds ?? 30;
@@ -246,7 +251,7 @@ export function PokerTable({ gameId }: { gameId: number }) {
   const betMin = game?.my_action_limits?.min_bet_to ?? (gameState?.min_raise ?? bbAmount);
   const raiseMin = game?.my_action_limits?.min_raise_to ?? (currentBet + (gameState?.min_raise ?? bbAmount));
 
-  const isShowdown = gameState?.phase === 'showdown' || game?.status === 'finished';
+  const isShowdown = gameState?.phase === 'showdown' || reveal.showdown;
 
   const displayProps: PokerTableDisplayProps = {
     game,
@@ -294,6 +299,16 @@ export function PokerTable({ gameId }: { gameId: number }) {
     showFoldConfirm,
     setShowFoldConfirm,
     confirmFold,
+    // Result / reveal props
+    results: game?.results ?? [],
+    winners: game?.winners ?? [],
+    winningCards: game?.winning_cards ?? [],
+    potTotal: game?.pot_total ?? gameState?.pot ?? 0,
+    showResult: reveal.showResult,
+    revealActive: reveal.revealActive,
+    revealRemaining: reveal.remainingSeconds,
+    onSkipReveal: reveal.skip,
+    showdown: reveal.showdown,
     // Finished panel props
     nextGameId: game?.next_game_id ?? null,
     buyIn: game?.buy_in ?? 0,

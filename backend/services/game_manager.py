@@ -410,8 +410,8 @@ class GameManager:
         game.status = GameStatus.FINISHED
         game.finished_at = now
         game.turn_deadline = None
-        game.state = game_instance.to_json()
-        # Pot is distributed to players, so reset to 0
+        # Pot is distributed to players, so reset to 0. The settled pot total is
+        # preserved in state/metadata for the result screen.
         game.pot = 0
 
         winner_id = game_instance.get_winner()
@@ -470,20 +470,31 @@ class GameManager:
                         user.total_wins += 1
 
         elif game.game_type == GameType.POKER:
-            # Poker: each player gets remaining chips + pot share
-            # Determine result per player: win (net > 0), loss (net < 0), push (net == 0)
+            from games.poker import evaluate_hand_best, hand_display_name
+
+            # Poker: each player gets remaining chips + pot share.
+            # Persist everything the result screen needs into the game state so
+            # masked GET responses keep the authoritative hand/result data.
+            active_players = [
+                p for p in game_instance.state.players if p.get("status") == "active"
+            ]
+            showdown = len(active_players) > 1
+            winners = game_instance.get_winners()
+            pot_total = game_instance.state.pot
+            winning_cards: list[str] = []
+
             for player_state in game_instance.state.players:
                 player_id = player_state["id"]
                 payout = payouts.get(player_id, 0)
-                buy_in = player_state.get("chips", 0) + player_state.get("total_bet", 0)
-                # Net = payout - buy_in (but buy_in was already debited at join)
-                # So we compare payout to original buy_in
                 session = self.db.query(GameSession).filter(
                     and_(GameSession.game_id == game.id, GameSession.user_id == player_id)
                 ).first()
+                buy_in = session.buy_in if session else game.buy_in
+                contribution = max(0, buy_in - int(player_state.get("chips", 0) or 0))
+                net = payout - buy_in
+
                 if session:
                     session.payout = payout
-                    net = payout - session.buy_in
                     if net > 0:
                         session.result = "win"
                     elif net < 0:
@@ -491,6 +502,38 @@ class GameManager:
                     else:
                         session.result = "push"
                     session.left_at = now
+
+                if player_state.get("status") == "folded":
+                    result = "folded"
+                elif player_id in winners:
+                    result = "split" if len(winners) > 1 else "won"
+                else:
+                    result = "lost"
+
+                hand_name = None
+                best_five: list[str] = []
+                revealed_cards: list[str] = []
+                if showdown and player_state.get("status") == "active":
+                    all_cards = list(player_state.get("cards") or []) + list(
+                        game_instance.state.community_cards or []
+                    )
+                    (rank, _tiebreakers), best_five = evaluate_hand_best(all_cards)
+                    hand_name = hand_display_name(rank)
+                    revealed_cards = list(player_state.get("cards") or [])
+                    if player_id in winners:
+                        for card in best_five:
+                            if card not in winning_cards:
+                                winning_cards.append(card)
+
+                player_state.update({
+                    "result": result,
+                    "payout": payout,
+                    "contribution": contribution,
+                    "net": net,
+                    "hand_name": hand_name,
+                    "revealed_cards": revealed_cards,
+                    "hand_cards": best_five,
+                })
 
                 if payout > 0:
                     self.wallet.add_points(
@@ -505,8 +548,20 @@ class GameManager:
                 user = self.db.query(User).filter(User.id == player_id).first()
                 if user:
                     user.total_games += 1
-                    if payout > session.buy_in:
+                    if payout > buy_in:
                         user.total_wins += 1
+
+            metadata = game_instance.state.metadata
+            metadata["showdown"] = showdown
+            metadata["winner_ids"] = winners
+            metadata["pot_total"] = pot_total
+            metadata["winning_cards"] = winning_cards
+            metadata["results_version"] = 1
+            # No one is on turn after the hand ends; the UI must not keep
+            # showing a stale "Your Turn" highlight.
+            game_instance.state.current_player = -1
+
+        game.state = game_instance.to_json()
 
     def get_game(self, game_id: int, user_id: Optional[int] = None) -> Optional[Game]:
         game = self.db.query(Game).filter(Game.id == game_id).first()

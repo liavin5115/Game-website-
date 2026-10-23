@@ -46,6 +46,11 @@ export interface Game {
   max_players?: number;
   min_players?: number;
   players?: GamePlayer[];
+  results?: PokerResult[];
+  winners?: number[];
+  pot_total?: number;
+  showdown?: boolean;
+  winning_cards?: string[];
   current_turn_user_id?: number;
   my_valid_actions?: string[];
   my_action_limits?: {
@@ -53,6 +58,18 @@ export interface Game {
     min_raise_to: number;
     max_bet_to: number;
   } | null;
+}
+
+export interface PokerResult {
+  id: number;
+  username: string;
+  result: 'won' | 'lost' | 'folded' | 'split';
+  payout: number;
+  contribution: number;
+  net: number;
+  hand_name: string | null;
+  revealed_cards: string[];
+  hand_cards: string[];
 }
 
 export interface GameState {
@@ -77,6 +94,11 @@ export interface PlayerState {
   doubled?: boolean;
   result?: string;
   payout?: number;
+  contribution?: number;
+  net?: number;
+  hand_name?: string | null;
+  revealed_cards?: string[];
+  hand_cards?: string[];
   auto_stood?: boolean;
   away?: boolean;
   connected?: boolean;

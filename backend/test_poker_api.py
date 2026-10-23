@@ -13,7 +13,9 @@ from fastapi.testclient import TestClient
 
 from database import SessionLocal
 from main import app
-from models import Game, GameStatus
+from models import Game, GameSession, GameStatus, Transaction
+from games.base import GamePhase
+from games.poker import PokerGame
 
 PASSWORD = "testpass123"
 
@@ -248,3 +250,149 @@ def test_full_hand_to_showdown(client):
     assert final["winner_id"] is not None
     assert len(final["state"]["community_cards"]) == 5
     assert final["state"]["phase"] in ("showdown", "finished")
+
+
+def _me(client: TestClient, user: dict) -> dict:
+    r = client.get("/api/auth/me", headers=_h(user))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _assert_conservation(results: list[dict], buy_in: int) -> None:
+    assert sum(r["net"] for r in results) == 0
+    assert sum(r["payout"] for r in results) == buy_in * len(results)
+    for r in results:
+        assert r["net"] == r["payout"] - buy_in
+        assert isinstance(r["contribution"], int)
+        assert 0 <= r["contribution"] <= buy_in
+
+
+def _assert_wallet_matches(
+    client: TestClient,
+    users: list[dict],
+    gid: int,
+    results: list[dict],
+    buy_in: int,
+    starting: dict[int, int],
+):
+    by_id = {r["id"]: r for r in results}
+    for user in users:
+        assert _me(client, user)["points"] == starting[user["id"]] - buy_in + by_id[user["id"]]["payout"]
+
+    db = SessionLocal()
+    try:
+        rows = db.query(Transaction).filter(Transaction.reference_id == gid).all()
+        by_user: dict[int, int] = {}
+        for tx in rows:
+            if tx.user_id in by_id and tx.amount > 0:
+                by_user[tx.user_id] = by_user.get(tx.user_id, 0) + tx.amount
+        for user in users:
+            expected = by_id[user["id"]]["payout"]
+            if expected > 0:
+                assert by_user.get(user["id"], 0) == expected
+    finally:
+        db.close()
+
+
+def test_showdown_results_match_wallet_and_conserve(client):
+    users = _users(client)
+    starting = {u["id"]: _me(client, u)["points"] for u in users}
+    gid = _new_game(client, users)
+
+    for _ in range(200):
+        u, g = _actor(client, users, gid)
+        if u is None:
+            break
+        valid = g.get("my_valid_actions") or []
+        action = "check" if "check" in valid else "call"
+        assert _act(client, u, gid, action).status_code == 200
+
+    g = _get(client, users[0], gid)
+    assert g["status"] == "finished"
+    assert g["showdown"] is True
+    assert g["pot_total"] == 15
+    assert len(g["results"]) == 3
+    assert g["winners"]
+    assert set(g["winners"]) == {
+        r["id"] for r in g["results"] if r["result"] in ("won", "split")
+    }
+
+    _assert_conservation(g["results"], 100)
+    _assert_wallet_matches(client, users, gid, g["results"], 100, starting)
+
+    for r in g["results"]:
+        assert r["result"] in ("won", "lost", "split", "folded")
+        assert r["hand_name"], r
+        assert len(r["revealed_cards"]) == 2
+        assert len(r["hand_cards"]) == 5
+    # Getting the same hand as another player must not leak anything different.
+    assert _get(client, users[1], gid)["results"] == g["results"]
+
+
+def test_preflop_fold_is_uncontested_and_net_is_blind(client):
+    users = _users(client, 2)
+    starting = {u["id"]: _me(client, u)["points"] for u in users}
+    gid = _new_game(client, users, n=2)
+
+    actor, before = _actor(client, users, gid)
+    assert actor is not None
+    assert "fold" in before["my_valid_actions"]
+    sb_amount = before["state"]["metadata"]["sb_amount"]
+    bb_amount = before["state"]["metadata"]["bb_amount"]
+
+    r = _act(client, actor, gid, "fold")
+    assert r.status_code == 200, r.text
+
+    g = _get(client, users[1], gid)
+    assert g["status"] == "finished"
+    assert g["showdown"] is False
+    assert g["pot_total"] == sb_amount + bb_amount
+    results = {r["id"]: r for r in g["results"]}
+    folder = results[actor["id"]]
+    winner = next(r for r in g["results"] if r["id"] != actor["id"])
+
+    assert folder["result"] == "folded"
+    assert folder["net"] == -sb_amount
+    assert folder["payout"] == 100 - sb_amount
+    assert folder["contribution"] == sb_amount
+    assert folder["revealed_cards"] == []
+    assert folder["hand_name"] is None
+
+    assert winner["result"] == "won"
+    assert winner["net"] == sb_amount
+    assert winner["payout"] == 100 + sb_amount
+    assert winner["revealed_cards"] == []
+    assert winner["hand_name"] is None
+
+    _assert_conservation(g["results"], 100)
+    _assert_wallet_matches(client, users, gid, g["results"], 100, starting)
+
+
+def test_odd_chip_split_conserves_and_first_winner_gets_odd_chip():
+    players = [
+        {"id": 1, "username": "one", "chips": 100},
+        {"id": 2, "username": "two", "chips": 100},
+        {"id": 3, "username": "three", "chips": 100},
+    ]
+    game = PokerGame(100, players)
+    game.state.phase = GamePhase.FINISHED
+    game.state.community_cards = ["2c", "3d", "4h", "5s", "9c"]
+    game.state.pot = 201
+    game.state.players = [
+        # Both active players play the same A-K-high board hand.
+        {"id": 1, "username": "one", "chips": 0, "cards": ["Ah", "Kd"],
+         "bet": 0, "total_bet": 100, "status": "active"},
+        {"id": 2, "username": "two", "chips": 0, "cards": ["As", "Kh"],
+         "bet": 0, "total_bet": 100, "status": "active"},
+        {"id": 3, "username": "three", "chips": 99, "cards": ["7c", "8c"],
+         "bet": 0, "total_bet": 1, "status": "folded"},
+    ]
+    game.street = 0
+
+    winners = game.get_winners()
+    assert winners == [1, 2]
+    payouts = game.get_payouts()
+    assert payouts == {1: 101, 2: 100, 3: 99}
+    assert sum(payouts.values()) == 300
+    assert sum(payouts[p["id"]] - 100 for p in game.state.players) == 0
+    assert all(payouts[p["id"]] >= 0 for p in game.state.players)

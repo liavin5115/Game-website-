@@ -570,3 +570,28 @@ Mobile at 380px (same-origin 380px iframe, `clientWidth` 372): mobile stacked la
 8. Desktop 2/3/6/10: no seat/badge/timer overlap; me bottom center; others clockwise.
 9. 380px: stacked layout, 2-column Opponents grid, no horizontal scroll.
 10. Finish a hand to showdown; verify result modal and rematch still work.
+
+
+## Poker result screen + timed reveal (server-authoritative)
+
+The server is the single source of truth for win/loss; the UI never computes payouts.
+
+### Backend
+- `games/poker.py`: `HAND_NAMES`, `evaluate_hand_best`, `hand_display_name`.
+- `services/game_manager.py::_finish_game` (poker branch): persists per player `result`, `payout`, `contribution` (= buy_in - final chips), `net` (= payout - buy_in), `hand_name`, `revealed_cards`, `hand_cards`; metadata `showdown`, `winner_ids`, `pot_total`, `winning_cards`, `results_version`; sets `state.current_player = -1`; assigns `game.state` after settlement.
+- `routers/games.py::game_to_response`: returns top-level `results`, `winners`, `pot_total`, `showdown`, `winning_cards` plus per-player fields; fixed finished `players.status` precedence; old finished games get derived results (no schema change).
+
+### Frontend
+- `config/poker.ts` (`REVEAL_SECONDS=5`, `FOLD_REVEAL_SECONDS=1.5`); `lib/pokerReveal.ts` + test; `hooks/usePokerReveal.ts` (one interval with cleanup, called above early returns); `lib/pokerFormat.ts` (single amount formatter; missing -> "-", warns once).
+- `PokerTable`/`PokerTableDisplay`: reveal banner + Skip, 200ms card flip (reduced-motion aware), winning seats/five cards highlighted, others dimmed, hand names under seats, net labels near the end, "Hand finished" action bar, inline result panel (does not cover the board). Timing is anchored to `finished_at` + `server_time` + `clockOffset`; remaining time never exceeds the configured window, refreshes resume, and after the window the panel shows immediately.
+
+### Tests
+- `test_poker_api.py`: showdown results match wallet and conserve points; preflop fold is uncontested with net = -blind; odd-chip split conserves and gives the odd chip to the first winner.
+- `frontend/src/lib/pokerReveal.test.ts`: fake clock with +5 minute offset, duration clamp, fold window, missing `finished_at`.
+- Results: backend `pytest -q` -> 35 passed, 5 failed + 1 error, all pre-existing `test_fixes.py` / `test_websocket_client.py` (require a running server / asyncio plugin); every poker suite passes. Frontend `npx tsc --noEmit`, `npm test` (12 passed) and `npm run build` pass.
+
+### Manual two-window verification
+- Showdown (games 39/43): reveal showed "Showing result in 5" with Skip, winner ring + five winning cards highlighted, hand name; panel then showed "You won/lost +/-N pts" with payout/net/badges/pot total/balance matching the wallet transactions.
+- Fold (game 40): uncontested short reveal, no card reveal, panel net -2/+2 and pot 7; Skip dismissed it early.
+- Refresh reload mid-reveal resumed at 3 seconds (not a fresh 5); once the window elapsed the panel appeared immediately.
+- Play Again created a new waiting game as host with the 100 pt buy-in held.

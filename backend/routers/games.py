@@ -57,6 +57,11 @@ class GameResponse(BaseModel):
     max_players: int
     min_players: int
     players: list[dict]
+    results: list[dict] = []
+    winners: list[int] = []
+    pot_total: Optional[int] = None
+    showdown: bool = False
+    winning_cards: list[str] = []
     winner_id: Optional[int]
     state: dict
     current_turn_user_id: Optional[int]
@@ -221,6 +226,90 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
     # Get player state from game state for auto_stood/away
     players_state = state_dict.get("players", [])
     player_state_map = {p["id"]: p for p in players_state}
+    state_metadata = state_dict.get("metadata", {}) or {}
+    is_finished = game.status == GameStatus.FINISHED
+    is_poker = game.game_type == GameType.POKER
+
+    # Authoritative end-of-hand results. New games persist these fields at
+    # settlement; the fallbacks keep old finished games readable.
+    results: list[dict] = []
+    winners: list[int] = []
+    showdown = False
+    pot_total = state_dict.get("pot", game.pot) or 0
+    winning_cards: list[str] = []
+    if is_finished and is_poker:
+        raw_winners = state_metadata.get("winner_ids")
+        if isinstance(raw_winners, list):
+            winners = [int(w) for w in raw_winners]
+        elif game.winner_id is not None:
+            winners = [int(game.winner_id)]
+        active_states = [p for p in players_state if p.get("status") == "active"]
+        showdown = bool(state_metadata.get("showdown", len(active_states) > 1))
+        pot_total = int(state_metadata.get("pot_total", pot_total) or 0)
+        winning_cards = list(state_metadata.get("winning_cards") or [])
+
+        from games.poker import evaluate_hand_best, hand_display_name
+
+        for s in sessions:
+            if s.user_id not in user_map:
+                continue
+            p = player_state_map.get(s.user_id, {})
+            payout = int(s.payout or 0)
+            buy_in = int(s.buy_in or 0)
+            net = payout - buy_in
+            contribution = max(0, buy_in - int(p.get("chips", 0) or 0))
+            player_status = p.get("status")
+
+            result = p.get("result")
+            if result not in ("won", "lost", "folded", "split"):
+                if player_status == "folded":
+                    result = "folded"
+                elif s.user_id in winners:
+                    result = "split" if len(winners) > 1 else "won"
+                else:
+                    result = "lost"
+
+            hand_name = p.get("hand_name")
+            revealed_cards = list(p.get("revealed_cards") or [])
+            hand_cards = list(p.get("hand_cards") or [])
+
+            # Old finished games predate the persisted result fields. Their
+            # visible state still has the showdown cards, so derive the same
+            # display data without ever exposing folded/uncontested cards.
+            if showdown and player_status == "active":
+                visible_cards = [c for c in (p.get("cards") or []) if c != "??"]
+                if not revealed_cards and len(visible_cards) == 2:
+                    revealed_cards = visible_cards
+                if not hand_name and len(visible_cards) == 2:
+                    community = [c for c in (state_dict.get("community_cards") or []) if c != "??"]
+                    if len(community) >= 3:
+                        (rank, _), best_five = evaluate_hand_best(visible_cards + community)
+                        hand_name = hand_display_name(rank)
+                        hand_cards = best_five
+                        if s.user_id in winners:
+                            for card in best_five:
+                                if card not in winning_cards:
+                                    winning_cards.append(card)
+            else:
+                revealed_cards = []
+                hand_name = None
+                hand_cards = []
+
+            results.append({
+                "id": s.user_id,
+                "username": user_map[s.user_id].username,
+                "result": result,
+                "payout": payout,
+                "contribution": contribution,
+                "net": net,
+                "hand_name": hand_name,
+                "revealed_cards": revealed_cards,
+                "hand_cards": hand_cards,
+            })
+    elif is_finished and game.winner_id is not None:
+        winners = [int(game.winner_id)]
+
+    results_by_id = {r["id"]: r for r in results}
 
     # Get connected players from manager
     connected_players = manager.get_connected_players(game.id)
@@ -231,7 +320,13 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
             "username": user_map[s.user_id].username,
             "seat": s.position,
             "bet": s.buy_in,
-            "status": s.result or "playing" if game.status.value == "in_progress" else "waiting",
+            "status": s.result or ("playing" if game.status.value == "in_progress" else "waiting"),
+            "result": results_by_id.get(s.user_id, {}).get("result"),
+            "payout": results_by_id.get(s.user_id, {}).get("payout"),
+            "contribution": results_by_id.get(s.user_id, {}).get("contribution"),
+            "net": results_by_id.get(s.user_id, {}).get("net"),
+            "hand_name": results_by_id.get(s.user_id, {}).get("hand_name"),
+            "revealed_cards": results_by_id.get(s.user_id, {}).get("revealed_cards", []),
             "auto_stood": player_state_map.get(s.user_id, {}).get("auto_stood", False),
             "away": player_state_map.get(s.user_id, {}).get("status") == "away",
             "connected": s.user_id in connected_players,
@@ -295,6 +390,11 @@ def game_to_response(game: Game, user_id: Optional[int], db: Session) -> dict:
         "max_players": metadata.get("max_players", 2),
         "min_players": metadata.get("min_players", 2),
         "players": players,
+        "results": results,
+        "winners": winners,
+        "pot_total": pot_total if is_finished else state_dict.get("pot", game.pot),
+        "showdown": showdown,
+        "winning_cards": winning_cards,
         "winner_id": game.winner_id,
         "state": state_dict,
         "current_turn_user_id": current_turn_user_id,

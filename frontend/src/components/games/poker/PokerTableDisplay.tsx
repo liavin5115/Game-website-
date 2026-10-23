@@ -5,6 +5,8 @@ import { Button } from '../../common/Button';
 import { Modal } from '../../common/Modal';
 import { Input } from '../../common/Input';
 import { chipColors } from '../../../design/tokens';
+import { formatPokerAmount, formatPokerNet, formatPokerPoints } from '../../../lib/pokerFormat';
+import type { PokerResult } from '../../../types';
 
 const STREET_LABELS = ['Preflop', 'Flop', 'Turn', 'River', 'Showdown'];
 
@@ -99,6 +101,16 @@ export interface PokerTableDisplayProps {
   showFoldConfirm: boolean;
   setShowFoldConfirm: (v: boolean) => void;
   confirmFold: () => void;
+  // Reveal / results
+  results: PokerResult[];
+  winners: number[];
+  winningCards: string[];
+  potTotal: number;
+  showResult: boolean;
+  revealActive: boolean;
+  revealRemaining: number;
+  onSkipReveal: () => void;
+  showdown: boolean;
   // Finished panel
   nextGameId: number | null;
   buyIn: number;
@@ -119,6 +131,13 @@ function PlayerSeat({
   autoActed,
   connected,
   isShowdown,
+  result,
+  isFinished,
+  revealActive,
+  revealRemaining,
+  showdown,
+  winningCards,
+  isWinner,
   showTimer,
   remaining,
   turnSeconds,
@@ -135,6 +154,13 @@ function PlayerSeat({
   autoActed: boolean;
   connected: boolean;
   isShowdown: boolean;
+  result?: PokerResult;
+  isFinished: boolean;
+  revealActive: boolean;
+  revealRemaining: number;
+  showdown: boolean;
+  winningCards: string[];
+  isWinner: boolean;
   showTimer?: boolean;
   remaining?: number;
   turnSeconds?: number;
@@ -146,13 +172,17 @@ function PlayerSeat({
   const isAllIn = status === 'allin' || status === 'all_in';
   const isAway = status === 'away';
   const cardSize = compact ? 'xs' : 'sm';
+  const showNet = revealActive && (revealRemaining <= 2 || !showdown) && result;
+  const dimmed = revealActive && !isWinner;
 
   return (
     <div
       className={`flex flex-col items-center transition-all duration-200 ${
         compact ? 'min-w-[112px] gap-1' : 'min-w-[140px] gap-1.5'
       } ${
-        isCurrentTurn ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900' : ''
+        isCurrentTurn && !isFinished ? 'ring-2 ring-yellow-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900' : ''
+      } ${isWinner && revealActive ? 'ring-2 ring-green-400 ring-offset-2 ring-offset-white dark:ring-offset-gray-900 rounded-xl' : ''} ${
+        dimmed ? 'opacity-40' : ''
       }`}
     >
       {/* Top badges row: fixed slot so the timer never shifts the name */}
@@ -195,12 +225,19 @@ function PlayerSeat({
             <Card card="??" faceDown size={cardSize} />
           </div>
         ) : (
-          player.cards.map((card: string, i: number) => (
+          (player.cards || []).map((card: string, i: number) => (
             <Card
               key={i}
               card={showCards && card !== '??' ? card : '??'}
               faceDown={!showCards || card === '??'}
               size={cardSize}
+              className={
+                isShowdown && !isFolded && winningCards.includes(card)
+                  ? 'poker-card-flip ring-2 ring-green-400 shadow-[0_0_12px_rgba(74,222,128,0.7)]'
+                  : isShowdown && !isFolded
+                    ? 'poker-card-flip'
+                    : ''
+              }
             />
           ))
         )}
@@ -209,11 +246,31 @@ function PlayerSeat({
       {/* Stack and current bet on one line: no separate pill to overlap or
           add height. The bet stays visible as a secondary value. */}
       <div className={`flex items-baseline gap-1 font-mono font-semibold text-gray-900 dark:text-white ${compact ? 'text-[11px]' : 'text-xs'}`}>
-        <span>{player.chips.toLocaleString()}</span>
+        <span>{formatPokerAmount(player.chips)}</span>
         {player.bet > 0 && (
           <span className="text-yellow-600 dark:text-yellow-400 font-normal">· {player.bet}</span>
         )}
       </div>
+
+      {isFinished && showdown && result?.hand_name && (
+        <span className={`text-center font-medium text-green-700 dark:text-green-300 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+          {result.hand_name}
+        </span>
+      )}
+
+      {showNet && (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[11px] font-mono font-bold ${
+            Number(result?.net) > 0
+              ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300'
+              : Number(result?.net) < 0
+                ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
+                : 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'
+          }`}
+        >
+          {formatPokerNet(result?.net)}
+        </span>
+      )}
 
       {/* Status badges: at most one secondary status in compact mode so the
           row never wraps and grows into the seat below. */}
@@ -223,7 +280,7 @@ function PlayerSeat({
         {!connected && !isMe && <Badge compact={compact} className={STATUS_BADGE_STYLES.disconnected}>Disconnected</Badge>}
         {isAway && (connected || !compact) && <Badge compact={compact} className={STATUS_BADGE_STYLES.away}>Away</Badge>}
         {autoActed && !isAway && <Badge compact={compact} className={STATUS_BADGE_STYLES.auto_acted}>Auto-acted</Badge>}
-        {isCurrentTurn && !isFolded && !isAllIn && !isAway && (
+        {isCurrentTurn && !isFinished && !isFolded && !isAllIn && !isAway && (
           <Badge compact={compact} className="bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 animate-pulse">Your Turn</Badge>
         )}
       </div>
@@ -231,13 +288,33 @@ function PlayerSeat({
   );
 }
 
-function CommunityCards({ cards, street }: { cards: string[]; street: number }) {
+function CommunityCards({
+  cards,
+  street,
+  highlightCards = [],
+  dimNonWinning = false,
+}: {
+  cards: string[];
+  street: number;
+  highlightCards?: string[];
+  dimNonWinning?: boolean;
+}) {
   return (
     <div className="flex justify-center gap-2 flex-wrap">
       {Array.from({ length: 5 }).map((_, i) => (
         <div key={i} className="relative">
           {i < cards.length ? (
-            <Card card={cards[i]} size="md" />
+            <Card
+              card={cards[i]}
+              size="md"
+              className={
+                highlightCards.includes(cards[i])
+                  ? 'ring-2 ring-green-400 shadow-[0_0_12px_rgba(74,222,128,0.7)]'
+                  : dimNonWinning
+                    ? 'opacity-50'
+                    : ''
+              }
+            />
           ) : (
             <div
               className={`${CARD_SIZE_MD.width} ${CARD_SIZE_MD.height} rounded-lg border-2 border-dashed border-gray-300 dark:border-gray-600 bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-800 dark:to-gray-700`}
@@ -262,6 +339,10 @@ function CenterInfo({
   phase,
   myValidActions,
   isMyTurn,
+  revealActive,
+  revealRemaining,
+  showdown,
+  onSkipReveal,
 }: {
   pot: number;
   sbAmount: number;
@@ -270,13 +351,37 @@ function CenterInfo({
   phase: string;
   myValidActions: string[];
   isMyTurn: boolean;
+  revealActive: boolean;
+  revealRemaining: number;
+  showdown: boolean;
+  onSkipReveal: () => void;
 }) {
   return (
     <div className="flex flex-col items-center gap-2 text-center">
       <div className="flex items-center gap-4 text-sm text-gray-500 dark:text-gray-400">
         <span>Blinds: {sbAmount}/{bbAmount}</span>
-        <span className="text-yellow-600 dark:text-yellow-400 font-bold">Pot: {pot.toLocaleString()}</span>
+        <span className="text-yellow-600 dark:text-yellow-400 font-bold">Pot: {formatPokerAmount(pot)}</span>
       </div>
+
+      {revealActive && (
+        <div
+          aria-live="polite"
+          className="flex items-center gap-3 rounded-full border border-gold-500/50 bg-black/40 px-3 py-1 text-xs font-medium text-white shadow-lg"
+        >
+          <span>
+            {showdown
+              ? `Showing result in ${Math.max(1, revealRemaining)}`
+              : 'Hand complete'}
+          </span>
+          <button
+            type="button"
+            onClick={onSkipReveal}
+            className="rounded-full bg-gold-500 px-2 py-0.5 text-[11px] font-bold text-felt-950 hover:bg-gold-400"
+          >
+            Skip
+          </button>
+        </div>
+      )}
       {phase === 'in_progress' && currentTurnPlayerName && !isMyTurn && (
         <p className="text-sm text-gray-500 dark:text-gray-400">
           Waiting for <span className="font-medium text-gray-900 dark:text-white">{currentTurnPlayerName}</span>...
@@ -565,9 +670,19 @@ function FoldConfirmModal({
   );
 }
 
+const RESULT_BADGES: Record<string, { label: string; className: string }> = {
+  won: { label: 'Winner', className: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+  split: { label: 'Split', className: 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300' },
+  folded: { label: 'Folded', className: 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300' },
+  lost: { label: 'Lost', className: 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300' },
+};
+
 function FinishedPanel({
-  gameState,
-  players,
+  results,
+  meId,
+  potTotal,
+  showdown,
+  winningCards,
   nextGameId,
   buyIn,
   userPoints,
@@ -575,8 +690,11 @@ function FinishedPanel({
   onBackToLobby,
   rematchLoading,
 }: {
-  gameState: any;
-  players: any[];
+  results: PokerResult[];
+  meId?: number;
+  potTotal: number;
+  showdown: boolean;
+  winningCards: string[];
   nextGameId: number | null;
   buyIn: number;
   userPoints: number | undefined;
@@ -584,41 +702,78 @@ function FinishedPanel({
   onBackToLobby: () => void;
   rematchLoading: boolean;
 }) {
-  const isShowdown = gameState?.phase === 'showdown';
+  const mine = results.find((r) => r.id === meId);
+  const myNet = mine?.net;
+  const header = (() => {
+    switch (mine?.result) {
+      case 'won':
+        return { text: `You won ${formatPokerNet(myNet)} pts`, className: 'text-green-600 dark:text-green-400' };
+      case 'split':
+        return { text: `Split pot ${formatPokerNet(myNet)} pts`, className: 'text-yellow-600 dark:text-yellow-400' };
+      case 'folded':
+        return { text: `You folded ${formatPokerNet(myNet)} pts`, className: 'text-gray-600 dark:text-gray-300' };
+      case 'lost':
+        return { text: `You lost ${formatPokerNet(myNet)} pts`, className: 'text-red-600 dark:text-red-400' };
+      default:
+        return { text: 'Hand result', className: 'text-gray-900 dark:text-white' };
+    }
+  })();
+  const canAfford = (userPoints ?? 0) >= buyIn;
 
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-6 border dark:border-gray-700">
-      <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-4 text-center">
-        {isShowdown ? 'Showdown' : 'Hand Complete'}
-      </h3>
+    <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-5 border dark:border-gray-700 animate-slide-up">
+      <h3 className={`text-xl font-bold text-center mb-1 ${header.className}`}>{header.text}</h3>
+      <p className="text-center text-xs text-gray-500 dark:text-gray-400 mb-4">
+        {showdown ? 'Showdown' : 'Uncontested pot'} · Pot {formatPokerAmount(potTotal)}
+      </p>
 
-      {/* Results grid */}
-      <div className="grid gap-3 mb-6">
-        {players.map((player) => {
-          const payout = player.payout !== undefined ? player.payout : 0;
-          const bet = player.bet ?? 0;
-          const profit = payout - bet;
-          const resultStatus = player.result || player.status;
-          const isWinner = resultStatus === 'win' || resultStatus === 'split';
-
+      <div className="grid gap-2 mb-4">
+        {results.map((r) => {
+          const badge = RESULT_BADGES[r.result] || RESULT_BADGES.lost;
+          const isMe = r.id === meId;
           return (
-            <div key={player.id} className={`flex justify-between items-center p-3 rounded-lg ${isWinner ? 'bg-green-50 dark:bg-green-900/20' : 'bg-gray-50 dark:bg-gray-700/50'} border ${isWinner ? 'border-green-300 dark:border-green-700' : 'border-gray-200 dark:border-gray-600'}`}>
-              <div className="flex items-center gap-3">
-                <span className="font-medium text-gray-900 dark:text-white">{player.username}</span>
-                {isShowdown && player.cards && player.cards[0] !== '??' && (
-                  <div className="flex gap-1">
-                    {player.cards.map((card: string, i: number) => (
-                      <Card key={i} card={card} size="sm" />
+            <div
+              key={r.id}
+              className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 ${
+                r.result === 'won' || r.result === 'split'
+                  ? 'border-green-300 bg-green-50 dark:border-green-700 dark:bg-green-900/20'
+                  : 'border-gray-200 bg-gray-50 dark:border-gray-600 dark:bg-gray-700/50'
+              }`}
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate font-medium text-gray-900 dark:text-white">{r.username}</span>
+                {isMe && (
+                  <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[10px] font-medium text-blue-700 dark:bg-blue-900/30 dark:text-blue-300">
+                    You
+                  </span>
+                )}
+                <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${badge.className}`}>{badge.label}</span>
+                {r.revealed_cards?.length > 0 && (
+                  <span className="flex gap-0.5">
+                    {r.revealed_cards.map((card, i) => (
+                      <Card
+                        key={i}
+                        card={card}
+                        size="xs"
+                        className={winningCards.includes(card) ? 'ring-1 ring-green-400' : ''}
+                      />
                     ))}
-                  </div>
+                  </span>
+                )}
+                {r.hand_name && (
+                  <span className="text-xs text-gray-500 dark:text-gray-400">{r.hand_name}</span>
                 )}
               </div>
-              <div className="flex items-center gap-3">
-                <span className={`text-sm font-bold ${resultStatus === 'win' ? 'text-green-600' : resultStatus === 'split' ? 'text-yellow-600' : resultStatus === 'folded' ? 'text-gray-500' : 'text-red-600'}`}>
-                  {resultStatus.toUpperCase()}
+              <div className="flex items-center gap-4 text-right">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Payout <span className="font-mono text-gray-900 dark:text-white">{formatPokerAmount(r.payout)}</span>
                 </span>
-                <span className={`font-mono font-bold ${profit > 0 ? 'text-green-600' : profit < 0 ? 'text-red-600' : 'text-yellow-600'}`}>
-                  {profit > 0 ? '+' : ''}{profit.toLocaleString()}
+                <span
+                  className={`font-mono font-bold ${
+                    r.net > 0 ? 'text-green-600 dark:text-green-400' : r.net < 0 ? 'text-red-600 dark:text-red-400' : 'text-gray-500'
+                  }`}
+                >
+                  {formatPokerNet(r.net)}
                 </span>
               </div>
             </div>
@@ -626,19 +781,23 @@ function FinishedPanel({
         })}
       </div>
 
-      {/* Rematch / Back to lobby */}
-      <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+      <div className="mb-4 flex flex-col items-center justify-center gap-1 text-sm text-gray-600 dark:text-gray-300 sm:flex-row sm:gap-6">
+        <span>Pot total: <span className="font-mono font-semibold text-gray-900 dark:text-white">{formatPokerAmount(potTotal)}</span></span>
+        <span>Balance: <span className="font-mono font-semibold text-gray-900 dark:text-white">{formatPokerPoints(userPoints)}</span></span>
+      </div>
+
+      <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
         <Button
           onClick={onRematch}
           loading={rematchLoading}
-          disabled={rematchLoading || (userPoints ?? 0) < buyIn}
+          disabled={rematchLoading || !canAfford}
           className="min-w-[180px]"
         >
-          {nextGameId ? 'Join Rematch' : `Play Again (${buyIn} pts)`}
+          {nextGameId ? 'Join Rematch' : `Play Again (${formatPokerAmount(buyIn)} pts)`}
         </Button>
-        {(userPoints ?? 0) < buyIn && (
-          <span className="text-sm text-red-600 dark:text-red-400 text-center sm:text-left">
-            Insufficient balance ({(userPoints ?? 0).toLocaleString()} pts, need {buyIn.toLocaleString()} pts)
+        {!canAfford && (
+          <span className="text-center text-sm text-red-600 dark:text-red-400 sm:text-left">
+            Insufficient balance ({formatPokerPoints(userPoints)}, need {formatPokerAmount(buyIn)} pts)
           </span>
         )}
         <Button onClick={onBackToLobby} variant="secondary" size="lg">
@@ -662,6 +821,7 @@ function ActionBar({
   betMin,
   raiseMin,
   handleAction,
+  isFinished,
 }: {
   validActions: string[];
   isMyTurn: boolean;
@@ -675,8 +835,17 @@ function ActionBar({
   betMin: number;
   raiseMin: number;
   handleAction: (actionType: string, amount?: number) => void;
+  isFinished: boolean;
 }) {
   const disabled = !isMyTurn || isActionPending || remaining <= 0 || !isConnected;
+
+  if (isFinished) {
+    return (
+      <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700 text-center">
+        <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">Hand finished</p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700 sticky bottom-0 z-20 md:static">
@@ -793,6 +962,15 @@ export function PokerTableDisplay({
   showFoldConfirm,
   setShowFoldConfirm,
   confirmFold,
+  results,
+  winners,
+  winningCards,
+  potTotal,
+  showResult,
+  revealActive,
+  revealRemaining,
+  onSkipReveal,
+  showdown,
   nextGameId,
   buyIn,
   userPoints,
@@ -853,6 +1031,13 @@ export function PokerTableDisplay({
   }, [numPlayers, seatOrder]);
 
   const pot = gameState?.pot ?? 0;
+  const isFinished = game?.status === 'finished';
+  const resultsById = useMemo(() => {
+    const map: Record<number, PokerResult> = {};
+    for (const r of results || []) map[r.id] = r;
+    return map;
+  }, [results]);
+  const winnerSet = useMemo(() => new Set(winners || []), [winners]);
 
   return (
     <div className="relative min-h-[calc(100vh-8rem)] bg-felt-500/10 dark:bg-felt-900/10 px-4 py-6">
@@ -885,7 +1070,12 @@ export function PokerTableDisplay({
           {/* Center area: community cards + pot + info */}
           <div className="absolute inset-0 flex flex-col items-center justify-center p-8 pointer-events-none">
             <div className="pointer-events-auto z-10">
-              <CommunityCards cards={gameState.community_cards || []} street={street} />
+              <CommunityCards
+                cards={gameState.community_cards || []}
+                street={street}
+                highlightCards={winningCards}
+                dimNonWinning={revealActive && showdown}
+              />
               <CenterInfo
                 pot={gameState.pot || 0}
                 sbAmount={sbAmount}
@@ -894,6 +1084,10 @@ export function PokerTableDisplay({
                 phase={game.status}
                 myValidActions={validActions}
                 isMyTurn={isMyTurn}
+                revealActive={revealActive}
+                revealRemaining={revealRemaining}
+                showdown={showdown}
+                onSkipReveal={onSkipReveal}
               />
             </div>
           </div>
@@ -931,6 +1125,13 @@ export function PokerTableDisplay({
                   autoActed={autoActed}
                   connected={connected}
                   isShowdown={isShowdown}
+                  result={resultsById[player.id]}
+                  isFinished={isFinished}
+                  revealActive={revealActive}
+                  revealRemaining={revealRemaining}
+                  showdown={showdown}
+                  winningCards={winningCards}
+                  isWinner={winnerSet.has(player.id)}
                   showTimer={isCurrent && game.status === 'in_progress'}
                   remaining={remaining}
                   turnSeconds={turnSeconds}
@@ -947,7 +1148,12 @@ export function PokerTableDisplay({
       <div className="md:hidden space-y-4 pb-24">
         {/* Community cards & pot at top */}
         <div className="bg-white dark:bg-gray-800 rounded-xl shadow-sm p-4 border dark:border-gray-700">
-          <CommunityCards cards={gameState.community_cards || []} street={street} />
+          <CommunityCards
+            cards={gameState.community_cards || []}
+            street={street}
+            highlightCards={winningCards}
+            dimNonWinning={revealActive && showdown}
+          />
           <CenterInfo
             pot={gameState.pot || 0}
             sbAmount={sbAmount}
@@ -956,6 +1162,10 @@ export function PokerTableDisplay({
             phase={game.status}
             myValidActions={validActions}
             isMyTurn={isMyTurn}
+            revealActive={revealActive}
+            revealRemaining={revealRemaining}
+            showdown={showdown}
+            onSkipReveal={onSkipReveal}
           />
           {game.status === 'in_progress' && (
             <div className="mt-4 flex items-center justify-center gap-4">
@@ -1000,6 +1210,13 @@ export function PokerTableDisplay({
                         autoActed={autoActed}
                         connected={connected}
                         isShowdown={isShowdown}
+                        result={resultsById[player.id]}
+                        isFinished={isFinished}
+                        revealActive={revealActive}
+                        revealRemaining={revealRemaining}
+                        showdown={showdown}
+                        winningCards={winningCards}
+                        isWinner={winnerSet.has(player.id)}
                       />
                     </div>
                   );
@@ -1047,6 +1264,7 @@ export function PokerTableDisplay({
               betMin={betMin}
               raiseMin={raiseMin}
               handleAction={handleAction}
+              isFinished={isFinished}
             />
 
             {me.status === 'folded' && (
@@ -1056,8 +1274,12 @@ export function PokerTableDisplay({
         )}
       </div>
 
-      {/* Desktop Action Bar (fixed bottom) */}
-      <div className="md:block hidden fixed bottom-0 left-0 right-0 px-4 pb-4 max-w-6xl mx-auto z-20">
+      {/* Desktop Action Bar (fixed bottom while playing, inline when finished) */}
+      <div
+        className={`md:block hidden max-w-6xl mx-auto z-20 ${
+          isFinished ? 'relative mt-4' : 'fixed bottom-0 left-0 right-0 px-4 pb-4'
+        }`}
+      >
         <ActionBar
           validActions={validActions}
           isMyTurn={isMyTurn}
@@ -1071,24 +1293,26 @@ export function PokerTableDisplay({
           betMin={betMin}
           raiseMin={raiseMin}
           handleAction={handleAction}
+          isFinished={isFinished}
         />
       </div>
 
-      {/* Finished / Showdown Panel */}
-      {(game.status === 'finished' || isShowdown) && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/50">
-          <div className="w-full max-w-2xl max-h-[80vh] overflow-y-auto">
-            <FinishedPanel
-              gameState={gameState}
-              players={players}
-              nextGameId={nextGameId}
-              buyIn={buyIn}
-              userPoints={userPoints}
-              onRematch={onRematch}
-              onBackToLobby={onBackToLobby}
-              rematchLoading={rematchLoading}
-            />
-          </div>
+      {/* Result panel: inline below the table so the board stays visible */}
+      {isFinished && showResult && (
+        <div className="max-w-4xl mx-auto mt-6">
+          <FinishedPanel
+            results={results}
+            meId={me?.id}
+            potTotal={potTotal}
+            showdown={showdown}
+            winningCards={winningCards}
+            nextGameId={nextGameId}
+            buyIn={buyIn}
+            userPoints={userPoints}
+            onRematch={onRematch}
+            onBackToLobby={onBackToLobby}
+            rematchLoading={rematchLoading}
+          />
         </div>
       )}
 

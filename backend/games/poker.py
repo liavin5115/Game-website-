@@ -16,6 +16,20 @@ RANK_VALUE = {r: i for i, r in enumerate(RANKS, 2)}
 MIN_BUY_IN = 40
 BLIND_DIVISOR = 20  # BB = buy_in // 20
 
+# Human-readable labels for the numeric hand ranks returned by evaluate_hand().
+HAND_NAMES = {
+    9: "Royal Flush",
+    8: "Straight Flush",
+    7: "Four of a Kind",
+    6: "Full House",
+    5: "Flush",
+    4: "Straight",
+    3: "Three of a Kind",
+    2: "Two Pair",
+    1: "Pair",
+    0: "High Card",
+}
+
 
 def create_deck() -> list[str]:
     return [r + s for r in RANKS for s in SUITS]
@@ -39,16 +53,28 @@ def evaluate_hand(cards: list[str]) -> tuple[int, list[int]]:
     Hand ranks: 9=Royal Flush, 8=Straight Flush, 7=Four Kind, 6=Full House,
                 5=Flush, 4=Straight, 3=Three Kind, 2=Two Pair, 1=Pair, 0=High Card
     """
+    score, _ = evaluate_hand_best(cards)
+    return score
+
+
+def evaluate_hand_best(cards: list[str]) -> tuple[tuple[int, list[int]], list[str]]:
+    """Return ((hand_rank, tiebreakers), best_five_cards)."""
     if len(cards) < 5:
-        return (0, [])
+        return (0, []), []
 
     best_score = (-1, [])
+    best_cards: list[str] = []
     # Try all 5-card combinations (best 5 of 7)
     for combo in itertools.combinations(cards, 5):
         score = _evaluate_5cards(list(combo))
         if score > best_score:
             best_score = score
-    return best_score
+            best_cards = list(combo)
+    return best_score, best_cards
+
+
+def hand_display_name(rank: int) -> str:
+    return HAND_NAMES.get(rank, "High Card")
 
 
 def _evaluate_5cards(cards: list[str]) -> tuple[int, list[int]]:
