@@ -1,148 +1,203 @@
 # Game Platform
 
-Extensible multiplayer game platform with FastAPI backend + React frontend. Supports Poker, Blackjack, and easily adding new games.
+Real-time multiplayer game platform with a FastAPI backend and a React frontend. Currently ships two fully playable games: **Blackjack** and **Texas Hold'em Poker** (2–10 players). Extensible game registry — new games can be added without touching core infra.
 
-## Architecture
+## Features
+
+- **Lobby** — list/create/join waiting games with live WebSocket updates
+- **Waiting room** — player list, host-only start, leave with refund, auto-redirect when game starts
+- **Blackjack** — 3:2 blackjack, dealer soft-17, hit/stand/double, per-player settlement
+- **Texas Hold'em Poker** — full betting rounds (preflop/flop/turn/river/showdown), fold/check/call/bet/raise/all-in, single pot with split handling, blinds derived from buy-in
+- **Turn timer** — server-owned 30s clock, auto check/fold or stand on timeout, 2 strikes → "away"
+- **Reconnect & presence** — heartbeat, disconnected badges, abandoned-round handling, idle-room cancellation with refund, resume active game on login
+- **Rematch ("Play Again")** — idempotent, race-safe, joins existing waiting rematch or creates new
+- **Wallet** — balance, daily bonus, transaction ledger, SQL-aggregated stats (games played/wins/losses/pushes/win rate/net/biggest win)
+- **Result reveal** — server-authoritative payouts, timed card reveal, hand names, balance refresh
+- **Responsive UI** — desktop oval table (up to 10 seats) and mobile stacked layout
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Backend | FastAPI 0.109, Uvicorn, SQLAlchemy 2.0, Pydantic 2 |
+| Database | SQLite (`game_platform.db`) by default (Postgres supported via `DATABASE_URL`) |
+| Auth | JWT (HS256), 7-day expiry, `SECRET_KEY` from `.env` |
+| Real-time | Native FastAPI WebSocket + custom `ConnectionManager` |
+| Frontend | React 18, TypeScript, Vite 5, Tailwind CSS |
+| State/Query | TanStack Query v5, Zustand (auth only) |
+| Routing | React Router v6 |
+| Tests | pytest (backend), Vitest (frontend) |
+
+## Project Structure
 
 ```
 game_website/
-├── backend/                 # FastAPI API
-│   ├── main.py             # App entry, WebSocket handlers
-│   ├── config.py           # Settings (env-based)
-│   ├── database.py         # SQLAlchemy setup
-│   ├── models.py           # User, Game, GameSession, Transaction
-│   ├── auth.py             # JWT, password hashing
-│   ├── services/
-│   │   ├── wallet.py       # Point transactions, balance
-│   │   └── game_manager.py # Game lifecycle, registry
-│   ├── games/
-│   │   ├── __init__.py     # Game registry - ADD NEW GAMES HERE
-│   │   ├── base.py         # BaseGame, GameState, GameAction
-│   │   ├── poker.py        # Texas Hold'em
-│   │   └── blackjack.py    # Blackjack
-│   ├── routers/
-│   │   ├── auth.py         # /auth/register, /auth/login, /auth/me
-│   │   ├── wallet.py       # /wallet/balance, /wallet/daily-bonus
-│   │   ├── games.py        # /games/create, /games/join, /games/action
-│   │   └── lobby.py        # /lobby/games
-│   └── websocket/
-│       └── manager.py      # Real-time game updates
-├── frontend/               # React + Vite
-│   ├── src/
-│   │   ├── api/client.ts   # Axios with auth interceptors
-│   │   ├── stores/         # Zustand state management
-│   │   ├── components/
-│   │   │   ├── common/     # Button, Input, Modal, Layout
-│   │   │   ├── auth/       # LoginForm, RegisterForm
-│   │   │   ├── wallet/     # BalanceDisplay, TransactionHistory
-│   │   │   ├── lobby/      # GameList
-│   │   │   └── games/      # PokerTable, BlackjackTable
-│   │   ├── pages/          # Login, Register, Lobby, Game, Wallet
-│   │   └── types/          # Shared TypeScript types
-└── docker-compose.yml      # Full stack with Postgres + Redis
+├── backend/
+│   ├── main.py              # FastAPI app, WS endpoints, CORS, startup, sweepers
+│   ├── config.py            # Pydantic settings (.env)
+│   ├── database.py          # Engine (NullPool for SQLite), SessionLocal, init_db()
+│   ├── models.py            # User, Game, GameSession, Transaction
+│   ├── auth.py              # JWT encode/decode, password hashing
+│   ├── timeutils.py         # UTC ISO formatting
+│   ├── routers/             # auth, wallet, games, lobby
+│   ├── services/            # game_manager, wallet
+│   ├── games/               # base, blackjack, poker, __init__ registry
+│   └── websocket/           # ConnectionManager
+├── frontend/
+│   └── src/
+│       ├── api/             # axios client
+│       ├── hooks/           # useGameSocket, usePokerGame, usePokerReveal
+│       ├── stores/          # authStore (Zustand)
+│       ├── types/           # shared TS interfaces
+│       ├── pages/           # Login, Register, Lobby, Game, WaitingRoom, Wallet
+│       └── components/      # common, games/blackjack, games/poker, lobby, wallet
+├── CONTEXT.md               # Architecture & conventions
+├── PROGRESS.md              # Real-time task checklist (source of truth)
+├── docker-compose.yml
+└── README.md
 ```
 
 ## Quick Start (Local)
 
 ### Backend
+
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+# Windows: venv\Scripts\activate   |   Unix: source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-# Edit .env if needed
+cp .env.example .env   # edit if needed
 uvicorn main:app --reload
 ```
 
+API runs at http://localhost:8000 (docs at `/docs`).
+
 ### Frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Visit http://localhost:5173
+App runs at http://localhost:5173.
 
-### Docker (Full Stack)
+### Docker (full stack)
+
 ```bash
 docker-compose up --build
 ```
 
-## Adding a New Game
+> Note: docker-compose provisions Postgres + Redis and overrides `DATABASE_URL`. For local dev the default SQLite DB is used.
 
-1. **Create game logic** in `backend/games/yourgame.py`:
-```python
-from .base import BaseGame, GameAction, GameState, GamePhase
+## Environment Variables (`backend/.env`)
 
-class YourGame(BaseGame):
-    def _init_game(self): ...
-    def get_valid_actions(self, player_id): ...
-    def apply_action(self, player_id, action): ...
-    def is_finished(self): ...
-    def get_winner(self): ...
-    def get_payouts(self): ...
-    def to_json(self): ...
-    @classmethod
-    def from_json(cls, json_str, buy_in, players): ...
-```
-
-2. **Register in** `backend/games/__init__.py`:
-```python
-from .yourgame import YourGame
-
-GAME_REGISTRY["yourgame"] = YourGame
-GAME_METADATA["yourgame"] = {
-    "name": "Your Game",
-    "min_players": 2,
-    "max_players": 4,
-    "default_buy_in": 50,
-    "description": "Description",
-}
-```
-
-3. **Create frontend component** in `frontend/src/components/games/yourgame/YourGameTable.tsx`
-
-4. **Add route** in `frontend/src/pages/Game.tsx`:
-```python
-case 'yourgame':
-  return <YourGameTable gameId={parseInt(gameId!)} />;
-```
-
-That's it! The game will appear in lobby, support buy-ins, points, and real-time play.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | `sqlite:///./game_platform.db` | DB connection string |
+| `SECRET_KEY` | (change in prod) | JWT signing key |
+| `ALGORITHM` | `HS256` | JWT algorithm |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | `10080` | 7 days |
+| `DEBUG` | `true` | Debug mode |
+| `CORS_ORIGINS` | `["http://localhost:5173", ...]` | Allowed origins (JSON array) |
+| `INITIAL_POINTS` | `1000` | Starting balance |
+| `DAILY_BONUS` | `100` | Daily bonus amount |
 
 ## Point System
 
 - **Initial points**: 1000 (configurable via `INITIAL_POINTS`)
-- **Daily bonus**: 100 points (configurable via `DAILY_BONUS`)
-- **Game buy-in**: Deducted from points when joining
-- **Winnings**: Added to points when game finishes
-- **All transactions logged** in `Transaction` table with full audit trail
+- **Daily bonus**: 100 points/day (configurable via `DAILY_BONUS`)
+- **Game buy-in**: deducted on join/create
+- **Winnings**: credited on finish; all movements logged in `Transaction` with `balance_after` and `reference_id`
+- **Wallet stats**: SQL aggregates over finished `GameSession` rows
 
-## API Endpoints
+## API Overview
 
 ### Auth
-- `POST /api/auth/register` - Register
-- `POST /api/auth/login` - Login
-- `GET /api/auth/me` - Current user
+- `POST /api/auth/register` — register
+- `POST /api/auth/login` — returns `{access_token, user}`
+- `GET /api/auth/me` — current user
 
 ### Wallet
-- `GET /api/wallet/balance` - Current points
-- `GET /api/wallet/transactions` - History
-- `POST /api/wallet/daily-bonus` - Claim daily bonus
-- `GET /api/wallet/summary` - Win/loss stats
+- `GET /api/wallet/balance` — points
+- `GET /api/wallet/transactions` — paginated ledger
+- `POST /api/wallet/daily-bonus` — claim daily bonus
+- `GET /api/wallet/summary` — win/loss stats
 
 ### Games
-- `GET /api/games/types` - Available game types
-- `POST /api/games/create` - Create game
-- `POST /api/games/join` - Join game
-- `POST /api/games/action` - Take action (bet, fold, hit, etc.)
-- `GET /api/games/{id}` - Get game state
-- `GET /api/games/my/history` - User's game history
+- `GET /api/games/types` — registered game types + metadata
+- `POST /api/games/create` — create game (host), deduct buy-in
+- `POST /api/games/join` — join waiting game
+- `POST /api/games/leave` — leave waiting game, refund
+- `POST /api/games/start` — host starts (min players)
+- `POST /api/games/action` — take action (`{game_id, action, amount?, turn_seq?}`)
+- `POST /api/games/rematch` — idempotent rematch
+- `GET /api/games/{id}` — full state (opponent cards hidden during play)
+- `GET /api/games/active/me` — current user's active/waiting game
+- `GET /api/games/my/history` — past games
 
 ### Lobby
-- `GET /api/lobby/games` - List waiting games
+- `GET /api/lobby/games` — waiting games
 
 ### WebSocket
-- `ws://localhost:8000/ws/game/{game_id}?token=...` - Real-time game updates
-- `ws://localhost:8000/ws/lobby?token=...` - Lobby updates
+- `ws://host/ws/game/{game_id}?token=` — pushes `state_changed` (client refetches)
+- `ws://host/ws/lobby?token=` — pushes `lobby_changed`
+
+## Game Rules Summary
+
+### Blackjack
+- Dealer hits soft 17; blackjack pays 3:2; win pays 2× bet; push refunds; bust/loss = 0
+- Actions: hit, stand, double (wallet-checked)
+- 30s turn timer; 2 timeouts → "away" (auto-stand)
+
+### Texas Hold'em Poker
+- 2–10 players; buy-in ≥ 40; blinds: BB = `buy_in // 20`, SB = `BB // 2` (min 1)
+- No rake; leftover chips refunded
+- 30s per turn; timeout = check if legal else fold; 2 strikes → "away"
+- Actions: fold, check, call, bet, raise, all-in; min-raise enforced server-side
+- Single pot (no side pots in MVP); odd chip to first winner on split
+
+## Adding a New Game
+
+1. Create `backend/games/yourgame.py` implementing `BaseGame` (`_init_game`, `get_valid_actions`, `apply_action`, `is_finished`, `get_winner`, `get_payouts`, `to_json`, `from_json`).
+2. Register in `backend/games/__init__.py`:
+   ```python
+   GAME_REGISTRY["yourgame"] = YourGame
+   GAME_METADATA["yourgame"] = {"name": "Your Game", "min_players": 2, "max_players": 4, "default_buy_in": 50, "description": "..."}
+   ```
+3. Create `frontend/src/components/games/yourgame/YourGameTable.tsx`.
+4. Dispatch by `game_type` in `frontend/src/pages/Game.tsx`.
+
+The game then appears in the lobby, supports buy-ins/points, and real-time play automatically.
+
+## Testing
+
+### Backend
+```bash
+cd backend
+venv\Scripts\python.exe -m pytest -q
+```
+Poker suites: `test_poker.py`, `test_poker_group_c.py`, `test_poker_api.py`, `test_rematch.py`.  
+> Warning: tests delete all rows from the live `games` table — use a disposable DB.
+
+### Frontend
+```bash
+cd frontend
+npx tsc --noEmit
+npm test
+npm run build
+```
+
+## Conventions
+
+- Code/comments/variables in English
+- Backend imports absolute from `backend/` root; async endpoints; `ValueError` in services → `HTTPException` in routers
+- DB sessions per request; WebSocket endpoints create/close their own `SessionLocal`
+- Single `commit` per logical unit; `commit=False` on intermediate wallet ops
+- Server is single source of truth; idempotency for double-click/concurrent actions
+- No schema changes without asking; use `state.metadata` for extensible fields
+
+## Further Reading
+
+- `CONTEXT.md` — architecture, conventions, DB/API details
+- `PROGRESS.md` — real-time task checklist and Poker API contract
